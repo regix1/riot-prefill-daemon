@@ -149,3 +149,22 @@ dotnet_diagnostic.rs0030.severity = error
 
 # The method does not need to use async/await - Introduces annoying 'return' statements for async methods, that hurt code readability.
 dotnet_diagnostic.AsyncFixer01.severity = none
+
+# AsyncFixer02: prefers async I/O / CancelAsync over sync equivalents. The few sync calls here are
+# intentional: signal-handler CancellationTokenSource.Cancel() must run synchronously inside the handler,
+# and the Debug/ComparisonUtil File.WriteAllLines calls are dev-only diagnostics.
+dotnet_diagnostic.AsyncFixer02.severity = none
+
+# VSTHRD103: same rationale as AsyncFixer02 - sync Cancel() is deliberate in the Ctrl+C signal handler.
+dotnet_diagnostic.VSTHRD103.severity = none
+
+# VSTHRD002/VSTHRD003: synchronous Dispose() methods must block on async teardown
+# (_acceptTask await, _socketServer.DisposeAsync().GetResult()). There is no async IDisposable
+# entry point here, so the sync wait during shutdown is intentional.
+dotnet_diagnostic.VSTHRD002.severity = none
+dotnet_diagnostic.VSTHRD003.severity = none
+
+# Spectre1000: Use AnsiConsole instead of System.Console. The startup banner / early diagnostic
+# Console.WriteLine calls (Program.cs, Api/DaemonMode.cs) run before Spectre's AnsiConsole is set up
+# and are intentional plain-stdout output for the daemon. Matches the daemon style.
+dotnet_diagnostic.Spectre1000.severity = none

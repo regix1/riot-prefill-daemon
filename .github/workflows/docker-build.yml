@@ -32,10 +32,9 @@ jobs:
             runner: ubuntu-latest
             runtime: linux-x64
           # arm64 builds NATIVELY on a GitHub-hosted arm64 runner (much faster
-          # than QEMU emulation). FlatSharp.Compiler bundles an x86-64 'flatc'
-          # that cannot exec on arm64 (Exec format error), so the "Replace
-          # bundled flatc" step below swaps in the OS-native arm64 flatc
-          # (apt flatbuffers-compiler 23.5.26 matches FlatSharp 7.6.0's flatc).
+          # than QEMU emulation). FlatSharp C# is pre-generated and committed
+          # (see RiotPrefill/ReleaseManifestFile/Generated/), so the build never
+          # invokes 'flatc' on either arch — no QEMU, no apt flatc, just .NET.
           - platform: linux/arm64
             runner: ubuntu-24.04-arm
             runtime: linux-arm64
@@ -53,27 +52,6 @@ jobs:
 
       - name: Restore dependencies
         run: dotnet restore
-
-      # The build runs NATIVELY on arm64, but FlatSharp.Compiler 7.6.0 bundles
-      # ONLY an x86-64 'flatc' (its nuget ships linux/x64, macos, windows — no
-      # linux-arm64 build), and that flatc is a FlatSharp-specific fork that
-      # accepts flags stock distro flatc rejects (e.g. --bfbs-absolute-paths),
-      # so apt's flatbuffers-compiler is NOT a drop-in. Instead register
-      # qemu-user-static via binfmt so the bundled x86-64 flatc transparently
-      # executes during the FlatSharp codegen step. Only that tiny codegen
-      # subprocess is emulated — the .NET build/publish and Docker build all
-      # stay native arm64.
-      - name: Enable x86-64 binfmt for bundled flatc (arm64 only)
-        if: matrix.platform == 'linux/arm64'
-        run: |
-          set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install -y qemu-user-static binfmt-support
-          # Verify the bundled x86-64 flatc can now exec under emulation.
-          flatc_bin="$(find "$HOME/.nuget/packages/flatsharp.compiler" -path '*/net8.0/flatc/linux/flatc' -type f | head -n1)"
-          echo "Bundled flatc: $flatc_bin"
-          chmod +x "$flatc_bin"
-          "$flatc_bin" --version
 
       - name: Build
         run: dotnet build --no-restore --configuration Release /p:TreatWarningsAsErrors=false

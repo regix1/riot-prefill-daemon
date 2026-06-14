@@ -41,24 +41,24 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <FlatSharpSchema Include="ReleaseManifestFile/ReleaseManifestBody.fbs" />
-    <FlatSharpSchema Include="ReleaseManifestFile/ReleaseManifestBundle.fbs" />
-    <FlatSharpSchema Include="ReleaseManifestFile/ReleaseManifestBundleChunk.fbs" />
-    <FlatSharpSchema Include="ReleaseManifestFile/ReleaseManifestChunkingParameter.fbs" />
-    <FlatSharpSchema Include="ReleaseManifestFile/ReleaseManifestDirectory.fbs" />
-    <FlatSharpSchema Include="ReleaseManifestFile/ReleaseManifestEncryptionKey.fbs" />
-    <FlatSharpSchema Include="ReleaseManifestFile/ReleaseManifestFile.fbs" />
-    <FlatSharpSchema Include="ReleaseManifestFile/ReleaseManifestLanguage.fbs" />
+    <!--
+      FlatSharp C# is PRE-GENERATED and committed at
+      ReleaseManifestFile/Generated/RmanManifest.FlatSharp.generated.cs so the
+      build never invokes 'flatc'. This lets arm64 build natively (no QEMU, no
+      OS flatc version-matching headaches). To regenerate after editing a .fbs:
+      temporarily re-add the <FlatSharpSchema> items + the FlatSharp.Compiler
+      PackageReference below, build on x64, then copy
+      obj/<cfg>/FlatSharp.generated.cs over the committed file and revert this.
+      The .fbs schemas are kept in-repo as documentation but are NOT compiled.
+    -->
+    <None Include="ReleaseManifestFile/*.fbs" />
   </ItemGroup>
 
   <ItemGroup>
     <!-- External Packages -->
     <PackageReference Include="CommunityToolkit.Diagnostics" Version="8.2.0" />
     <PackageReference Include="CommunityToolkit.HighPerformance" Version="8.2.0" />
-    <PackageReference Include="FlatSharp.Compiler" Version="7.6.0">
-      <PrivateAssets>all</PrivateAssets>
-      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
-    </PackageReference>
+    <!-- FlatSharp.Compiler removed: C# is pre-generated & committed (see Generated/ above). Runtime stays. -->
     <PackageReference Include="FlatSharp.Runtime" Version="7.6.0" />
     <PackageReference Include="Intellenum" Version="1.0.0-beta.3" />
     <!--<PackageReference Include="LeagueToolkit" Version="3.0.3" />-->
