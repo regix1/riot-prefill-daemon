@@ -10,7 +10,7 @@
         /// <summary>
         /// This is the lower bound of the chunk, the offset from the beginning of the file
         /// </summary>
-        public uint OffsetFromStart { get; set; } = 0;
+        public uint OffsetFromStart { get; set; }
         public uint CompressedSize { get; set; }
 
         public uint UpperBound => OffsetFromStart + CompressedSize - 1;

@@ -155,7 +155,7 @@
                     {
                     }
                 }
-                catch (Exception e)
+                catch (Exception)
                 {
                     _ansiConsole.LogMarkupError($"Request failed {request.ToString()}");
                     failedRequests.Add(request);

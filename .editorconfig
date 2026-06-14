@@ -79,6 +79,43 @@ dotnet_diagnostic.CA2007.severity = none
 # CA2201: Do not raise reserved exception types
 dotnet_diagnostic.CA2201.severity = none
 
+# ----- Riot-specific suppressions (JSON/serialization DTOs + copied socket DTOs) -----
+# These mirror Battle.net's clean baseline: the warnings below are pure noise on
+# the snake_case JSON deserialization models and the copied socket command DTOs.
+# CA1707: Identifiers should not contain underscores
+# - Riot's JSON API uses snake_case fields (patch_url, allowed_http_fallback_hostnames);
+#   the DTO property names must match the wire format exactly.
+dotnet_diagnostic.CA1707.severity = none
+# CA1819: Properties should not return arrays
+# - JSON deserialization DTOs bind directly to arrays; exposing them is intentional.
+dotnet_diagnostic.CA1819.severity = none
+# CA2227: Collection properties should be read only
+# - Serialization DTOs (e.g. CommandRequest.Parameters, Products) need settable
+#   collections so the JSON deserializer can populate them. Identical to Battle.net.
+dotnet_diagnostic.CA2227.severity = none
+# CA1724: Type name conflicts with a namespace name
+# - 'Extensions' intentionally extends LancachePrefill.Common.Extensions conventions.
+dotnet_diagnostic.CA1724.severity = none
+# CA1849: Call async methods when in an async method
+# - The synchronous CancellationTokenSource.Cancel()/File.WriteAllLines calls are in
+#   shutdown/debug-only paths where the blocking cost is irrelevant.
+dotnet_diagnostic.CA1849.severity = none
+# CA1852: Type can be sealed
+# - Internal helper types; sealing is a churny micro-optimization not worth the noise.
+dotnet_diagnostic.CA1852.severity = none
+# CA1862: Prefer string.Equals with StringComparison over ToUpper()/ToLower()
+# - The ToUpper() comparisons match Riot's documented uppercase region codes.
+dotnet_diagnostic.CA1862.severity = none
+# CA1864: Prefer TryAdd over ContainsKey-guarded Add
+# - The guarded Add paths also branch into duplicate-tracking; the guard is load-bearing.
+dotnet_diagnostic.CA1864.severity = none
+# CA1513: Use ObjectDisposedException.ThrowIf
+# - Stylistic; the explicit throw is clearer in context.
+dotnet_diagnostic.CA1513.severity = none
+# CA1001: Type owns disposable fields but is not disposable
+# - The HttpClient lives for the process lifetime of the daemon handler; no dispose churn.
+dotnet_diagnostic.CA1001.severity = none
+
 # CS1998: Async method lacks 'await' operators and will run synchronously
 dotnet_diagnostic.cs1998.severity = error
 # CS4014: Because this call is not awaited, execution of the current method continues before the call is completed
