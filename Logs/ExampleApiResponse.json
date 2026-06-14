@@ -1,0 +1,724 @@
+{
+    "releases": [
+        {
+            "release": {
+                "product": "lol",
+                "id": "A877A8DF5E3A157C",
+                "labels": {
+                    "branch": {
+                        "values": [
+                            "releases-14-15"
+                        ]
+                    },
+                    "buildtracker_config": {
+                        "values": [
+                            "public-win32-packed-now-public"
+                        ]
+                    },
+                    "code": {
+                        "values": [
+                            "public"
+                        ]
+                    },
+                    "content": {
+                        "values": [
+                            "release"
+                        ]
+                    },
+                    "cpuarch": {
+                        "values": [
+                            "x86"
+                        ]
+                    },
+                    "platform": {
+                        "values": [
+                            "windows"
+                        ]
+                    },
+                    "riot:anticheat_option": {
+                        "values": [
+                            "vanguard"
+                        ]
+                    },
+                    "riot:artifact_type_id": {
+                        "values": [
+                            "lol-game-client"
+                        ]
+                    },
+                    "riot:artifact_version_id": {
+                        "values": [
+                            "14.15.6041538+branch.releases-14-15.code.public.content.release.cpuarch.x86.platform.windows"
+                        ]
+                    },
+                    "riot:cpu_arch": {
+                        "values": [
+                            "x86"
+                        ]
+                    },
+                    "riot:platform": {
+                        "values": [
+                            "windows"
+                        ]
+                    },
+                    "riot:revision": {
+                        "values": [
+                            "6041538"
+                        ]
+                    }
+                }
+            },
+            "compat_version": {
+                "id": "14.15.6041538+branch.releases-14-15.code.public.content.release.anticheat.vanguard"
+            },
+            "download": {
+                "url": "https://lol.secure.dyn.riotcdn.net/channels/public/releases/A877A8DF5E3A157C.manifest",
+                "scd_required": false
+            }
+        },
+        {
+            "release": {
+                "product": "lol",
+                "id": "70BBD1D99404FB38",
+                "labels": {
+                    "branch": {
+                        "values": [
+                            "releases-14-15"
+                        ]
+                    },
+                    "buildtracker_config": {
+                        "values": [
+                            "now-public",
+                            "now-internal"
+                        ]
+                    },
+                    "content": {
+                        "values": [
+                            "release"
+                        ]
+                    },
+                    "cpuarch": {
+                        "values": [
+                            "any"
+                        ]
+                    },
+                    "platform": {
+                        "values": [
+                            "macos-windows"
+                        ]
+                    },
+                    "riot:anticheat_option": {
+                        "values": [
+                            "vanguard"
+                        ]
+                    },
+                    "riot:artifact_type_id": {
+                        "values": [
+                            "lol-standalone-client-content"
+                        ]
+                    },
+                    "riot:artifact_version_id": {
+                        "values": [
+                            "14.15.6041538+branch.releases-14-15.content.release.cpuarch.any.platform.macos-windows"
+                        ]
+                    },
+                    "riot:cpu_arch": {
+                        "values": [
+                            "any"
+                        ]
+                    },
+                    "riot:platform": {
+                        "values": [
+                            "macos",
+                            "windows"
+                        ]
+                    },
+                    "riot:revision": {
+                        "values": [
+                            "6041538"
+                        ]
+                    }
+                }
+            },
+            "compat_version": {
+                "id": "14.15.6041538+branch.releases-14-15.code.public.content.release.anticheat.vanguard"
+            },
+            "download": {
+                "url": "https://lol.secure.dyn.riotcdn.net/channels/public/releases/70BBD1D99404FB38.manifest",
+                "scd_required": false
+            }
+        },
+        {
+            "release": {
+                "product": "lol",
+                "id": "107F5EAFF9BF7409",
+                "labels": {
+                    "branch": {
+                        "values": [
+                            "releases-14-16"
+                        ]
+                    },
+                    "buildtracker_config": {
+                        "values": [
+                            "now-public",
+                            "now-internal"
+                        ]
+                    },
+                    "content": {
+                        "values": [
+                            "release"
+                        ]
+                    },
+                    "cpuarch": {
+                        "values": [
+                            "any"
+                        ]
+                    },
+                    "platform": {
+                        "values": [
+                            "macos-windows"
+                        ]
+                    },
+                    "riot:anticheat_option": {
+                        "values": [
+                            "vanguard"
+                        ]
+                    },
+                    "riot:artifact_type_id": {
+                        "values": [
+                            "lol-standalone-client-content"
+                        ]
+                    },
+                    "riot:artifact_version_id": {
+                        "values": [
+                            "14.16.6078066+branch.releases-14-16.content.release.cpuarch.any.platform.macos-windows"
+                        ]
+                    },
+                    "riot:cpu_arch": {
+                        "values": [
+                            "any"
+                        ]
+                    },
+                    "riot:platform": {
+                        "values": [
+                            "macos",
+                            "windows"
+                        ]
+                    },
+                    "riot:revision": {
+                        "values": [
+                            "6078066"
+                        ]
+                    }
+                }
+            },
+            "compat_version": {
+                "id": "14.16.6078066+branch.releases-14-16.code.public.content.release.anticheat.vanguard"
+            },
+            "download": {
+                "url": "https://lol.secure.dyn.riotcdn.net/channels/public/releases/107F5EAFF9BF7409.manifest",
+                "scd_required": false
+            }
+        },
+        {
+            "release": {
+                "product": "lol",
+                "id": "A87DB03C6466F4E5",
+                "labels": {
+                    "branch": {
+                        "values": [
+                            "releases-14-16"
+                        ]
+                    },
+                    "buildtracker_config": {
+                        "values": [
+                            "public-win32-packed-now-public"
+                        ]
+                    },
+                    "content": {
+                        "values": [
+                            "release"
+                        ]
+                    },
+                    "cpuarch": {
+                        "values": [
+                            "x86"
+                        ]
+                    },
+                    "platform": {
+                        "values": [
+                            "windows"
+                        ]
+                    },
+                    "riot:anticheat_option": {
+                        "values": [
+                            "vanguard"
+                        ]
+                    },
+                    "riot:artifact_type_id": {
+                        "values": [
+                            "lol-game-client"
+                        ]
+                    },
+                    "riot:artifact_version_id": {
+                        "values": [
+                            "14.16.6078066+branch.releases-14-16.code.public.content.release.cpuarch.x86.platform.windows"
+                        ]
+                    },
+                    "riot:cpu_arch": {
+                        "values": [
+                            "x86"
+                        ]
+                    },
+                    "riot:platform": {
+                        "values": [
+                            "windows"
+                        ]
+                    },
+                    "riot:revision": {
+                        "values": [
+                            "6078066"
+                        ]
+                    }
+                }
+            },
+            "compat_version": {
+                "id": "14.16.6078066+branch.releases-14-16.code.public.content.release.anticheat.vanguard"
+            },
+            "download": {
+                "url": "https://lol.secure.dyn.riotcdn.net/channels/public/releases/A87DB03C6466F4E5.manifest",
+                "scd_required": false
+            }
+        },
+        {
+            "release": {
+                "product": "lol",
+                "id": "00DEAAEFED90D411",
+                "labels": {
+                    "branch": {
+                        "values": [
+                            "releases-14-15"
+                        ]
+                    },
+                    "buildtracker_config": {
+                        "values": [
+                            "now-public",
+                            "now-internal"
+                        ]
+                    },
+                    "content": {
+                        "values": [
+                            "release"
+                        ]
+                    },
+                    "cpuarch": {
+                        "values": [
+                            "any"
+                        ]
+                    },
+                    "platform": {
+                        "values": [
+                            "macos-windows"
+                        ]
+                    },
+                    "riot:anticheat_option": {
+                        "values": [
+                            "vanguard"
+                        ]
+                    },
+                    "riot:artifact_type_id": {
+                        "values": [
+                            "lol-standalone-client-content"
+                        ]
+                    },
+                    "riot:artifact_version_id": {
+                        "values": [
+                            "14.15.6045966+branch.releases-14-15.content.release.cpuarch.any.platform.macos-windows"
+                        ]
+                    },
+                    "riot:cpu_arch": {
+                        "values": [
+                            "any"
+                        ]
+                    },
+                    "riot:platform": {
+                        "values": [
+                            "macos",
+                            "windows"
+                        ]
+                    },
+                    "riot:revision": {
+                        "values": [
+                            "6045966"
+                        ]
+                    }
+                }
+            },
+            "compat_version": {
+                "id": "14.15.6045966+branch.releases-14-15.code.public.content.release.anticheat.vanguard"
+            },
+            "download": {
+                "url": "https://lol.secure.dyn.riotcdn.net/channels/public/releases/00DEAAEFED90D411.manifest",
+                "scd_required": false
+            }
+        },
+        {
+            "release": {
+                "product": "lol",
+                "id": "EFA3CD0B10E382CD",
+                "labels": {
+                    "branch": {
+                        "values": [
+                            "releases-14-15"
+                        ]
+                    },
+                    "buildtracker_config": {
+                        "values": [
+                            "public-win32-packed-now-public"
+                        ]
+                    },
+                    "code": {
+                        "values": [
+                            "public"
+                        ]
+                    },
+                    "content": {
+                        "values": [
+                            "release"
+                        ]
+                    },
+                    "cpuarch": {
+                        "values": [
+                            "x86"
+                        ]
+                    },
+                    "platform": {
+                        "values": [
+                            "windows"
+                        ]
+                    },
+                    "riot:anticheat_option": {
+                        "values": [
+                            "vanguard"
+                        ]
+                    },
+                    "riot:artifact_type_id": {
+                        "values": [
+                            "lol-game-client"
+                        ]
+                    },
+                    "riot:artifact_version_id": {
+                        "values": [
+                            "14.15.6045966+branch.releases-14-15.code.public.content.release.cpuarch.x86.platform.windows"
+                        ]
+                    },
+                    "riot:cpu_arch": {
+                        "values": [
+                            "x86"
+                        ]
+                    },
+                    "riot:platform": {
+                        "values": [
+                            "windows"
+                        ]
+                    },
+                    "riot:revision": {
+                        "values": [
+                            "6045966"
+                        ]
+                    }
+                }
+            },
+            "compat_version": {
+                "id": "14.15.6045966+branch.releases-14-15.code.public.content.release.anticheat.vanguard"
+            },
+            "download": {
+                "url": "https://lol.secure.dyn.riotcdn.net/channels/public/releases/EFA3CD0B10E382CD.manifest",
+                "scd_required": false
+            }
+        },
+        {
+            "release": {
+                "product": "lol",
+                "id": "E500DC5AFD2652B7",
+                "labels": {
+                    "branch": {
+                        "values": [
+                            "releases-14-15"
+                        ]
+                    },
+                    "buildtracker_config": {
+                        "values": [
+                            "now-public",
+                            "now-internal"
+                        ]
+                    },
+                    "content": {
+                        "values": [
+                            "release"
+                        ]
+                    },
+                    "cpuarch": {
+                        "values": [
+                            "any"
+                        ]
+                    },
+                    "platform": {
+                        "values": [
+                            "macos-windows"
+                        ]
+                    },
+                    "riot:anticheat_option": {
+                        "values": [
+                            "vanguard"
+                        ]
+                    },
+                    "riot:artifact_type_id": {
+                        "values": [
+                            "lol-standalone-client-content"
+                        ]
+                    },
+                    "riot:artifact_version_id": {
+                        "values": [
+                            "14.15.6070022+branch.releases-14-15.content.release.cpuarch.any.platform.macos-windows"
+                        ]
+                    },
+                    "riot:cpu_arch": {
+                        "values": [
+                            "any"
+                        ]
+                    },
+                    "riot:platform": {
+                        "values": [
+                            "macos",
+                            "windows"
+                        ]
+                    },
+                    "riot:revision": {
+                        "values": [
+                            "6070022"
+                        ]
+                    }
+                }
+            },
+            "compat_version": {
+                "id": "14.15.6070022+branch.releases-14-15.code.public.content.release.anticheat.vanguard"
+            },
+            "download": {
+                "url": "https://lol.secure.dyn.riotcdn.net/channels/public/releases/E500DC5AFD2652B7.manifest",
+                "scd_required": false
+            }
+        },
+        {
+            "release": {
+                "product": "lol",
+                "id": "E99F7E660E01A9B9",
+                "labels": {
+                    "branch": {
+                        "values": [
+                            "releases-14-15"
+                        ]
+                    },
+                    "buildtracker_config": {
+                        "values": [
+                            "public-win32-packed-now-public"
+                        ]
+                    },
+                    "code": {
+                        "values": [
+                            "public"
+                        ]
+                    },
+                    "content": {
+                        "values": [
+                            "release"
+                        ]
+                    },
+                    "cpuarch": {
+                        "values": [
+                            "x86"
+                        ]
+                    },
+                    "platform": {
+                        "values": [
+                            "windows"
+                        ]
+                    },
+                    "riot:anticheat_option": {
+                        "values": [
+                            "vanguard"
+                        ]
+                    },
+                    "riot:artifact_type_id": {
+                        "values": [
+                            "lol-game-client"
+                        ]
+                    },
+                    "riot:artifact_version_id": {
+                        "values": [
+                            "14.15.6070022+branch.releases-14-15.code.public.content.release.cpuarch.x86.platform.windows"
+                        ]
+                    },
+                    "riot:cpu_arch": {
+                        "values": [
+                            "x86"
+                        ]
+                    },
+                    "riot:platform": {
+                        "values": [
+                            "windows"
+                        ]
+                    },
+                    "riot:revision": {
+                        "values": [
+                            "6070022"
+                        ]
+                    }
+                }
+            },
+            "compat_version": {
+                "id": "14.15.6070022+branch.releases-14-15.code.public.content.release.anticheat.vanguard"
+            },
+            "download": {
+                "url": "https://lol.secure.dyn.riotcdn.net/channels/public/releases/E99F7E660E01A9B9.manifest",
+                "scd_required": false
+            }
+        },
+        {
+            "release": {
+                "product": "lol",
+                "id": "B017C2FFBA1C6DF5",
+                "labels": {
+                    "branch": {
+                        "values": [
+                            "releases-14-15"
+                        ]
+                    },
+                    "buildtracker_config": {
+                        "values": [
+                            "now-public",
+                            "now-internal"
+                        ]
+                    },
+                    "content": {
+                        "values": [
+                            "release"
+                        ]
+                    },
+                    "cpuarch": {
+                        "values": [
+                            "any"
+                        ]
+                    },
+                    "platform": {
+                        "values": [
+                            "macos-windows"
+                        ]
+                    },
+                    "riot:anticheat_option": {
+                        "values": [
+                            "vanguard"
+                        ]
+                    },
+                    "riot:artifact_type_id": {
+                        "values": [
+                            "lol-standalone-client-content"
+                        ]
+                    },
+                    "riot:artifact_version_id": {
+                        "values": [
+                            "14.15.6048769+branch.releases-14-15.content.release.cpuarch.any.platform.macos-windows"
+                        ]
+                    },
+                    "riot:cpu_arch": {
+                        "values": [
+                            "any"
+                        ]
+                    },
+                    "riot:platform": {
+                        "values": [
+                            "macos",
+                            "windows"
+                        ]
+                    },
+                    "riot:revision": {
+                        "values": [
+                            "6048769"
+                        ]
+                    }
+                }
+            },
+            "compat_version": {
+                "id": "14.15.6048769+branch.releases-14-15.code.public.content.release.anticheat.vanguard"
+            },
+            "download": {
+                "url": "https://lol.secure.dyn.riotcdn.net/channels/public/releases/B017C2FFBA1C6DF5.manifest",
+                "scd_required": false
+            }
+        },
+        {
+            "release": {
+                "product": "lol",
+                "id": "6803FABFBB623419",
+                "labels": {
+                    "branch": {
+                        "values": [
+                            "releases-14-15"
+                        ]
+                    },
+                    "buildtracker_config": {
+                        "values": [
+                            "public-win32-packed-now-public"
+                        ]
+                    },
+                    "cpuarch": {
+                        "values": [
+                            "x86"
+                        ]
+                    },
+                    "platform": {
+                        "values": [
+                            "windows"
+                        ]
+                    },
+                    "riot:anticheat_option": {
+                        "values": [
+                            "vanguard"
+                        ]
+                    },
+                    "riot:artifact_type_id": {
+                        "values": [
+                            "lol-game-client"
+                        ]
+                    },
+                    "riot:artifact_version_id": {
+                        "values": [
+                            "14.15.6048769+branch.releases-14-15.code.public.content.release.cpuarch.x86.platform.windows"
+                        ]
+                    },
+                    "riot:cpu_arch": {
+                        "values": [
+                            "x86"
+                        ]
+                    },
+                    "riot:platform": {
+                        "values": [
+                            "windows"
+                        ]
+                    },
+                    "riot:revision": {
+                        "values": [
+                            "6048769"
+                        ]
+                    }
+                }
+            },
+            "compat_version": {
+                "id": "14.15.6048769+branch.releases-14-15.code.public.content.release.anticheat.vanguard"
+            },
+            "download": {
+                "url": "https://lol.secure.dyn.riotcdn.net/channels/public/releases/6803FABFBB623419.manifest",
+                "scd_required": false
+            }
+        }
+    ]
+}
