@@ -7,14 +7,41 @@
 
         private readonly string _currentCdn;
 
+        // Optional structured-progress sink used when the handler is driven by the daemon API layer
+        // (RiotPrefillApi). When null the handler behaves exactly like the interactive CLI path and
+        // only renders Spectre progress. When set, it emits IPrefillProgress.OnDownloadProgress byte
+        // updates so the socket can stream "downloading" events to lancache-manager.
+        private readonly RiotPrefill.Api.IPrefillProgress _progress;
+        private readonly string _progressAppId;
+        private readonly string _progressAppName;
+
+        // Cumulative bytes transferred across the whole queue (live byte progress for the API sink).
+        private long _bytesTransferred;
+        private long _queueTotalBytes;
+        private readonly Stopwatch _progressTimer = new Stopwatch();
+
         /// <summary>
         /// The URL/IP Address where the Lancache has been detected.
         /// </summary>
         private string _lancacheAddress;
 
         public DownloadHandler(IAnsiConsole ansiConsole, Patchline product)
+            : this(ansiConsole, product, null, null, null)
+        {
+        }
+
+        /// <summary>
+        /// Progress-aware constructor used by the daemon API. <paramref name="progress"/>,
+        /// <paramref name="appId"/> and <paramref name="appName"/> let the handler emit structured
+        /// byte-progress events for the current product. All three are optional; when omitted the
+        /// handler runs exactly as the interactive CLI does.
+        /// </summary>
+        public DownloadHandler(IAnsiConsole ansiConsole, Patchline product, RiotPrefill.Api.IPrefillProgress progress, string appId, string appName)
         {
             _ansiConsole = ansiConsole;
+            _progress = progress ?? RiotPrefill.Api.NullProgress.Instance;
+            _progressAppId = appId ?? product.Value;
+            _progressAppName = appName ?? product.Name;
 
             _client = new HttpClient();
             _client.DefaultRequestHeaders.Add("User-Agent", "RiotNetwork/1.0.0");
@@ -47,6 +74,21 @@
         public async Task<bool> DownloadQueuedChunksAsync(List<Request> queuedRequests)
         {
             await InitializeAsync();
+
+            // Emit the up-front "preparing" total so the daemon UI can show "0 B / <total>" before
+            // the first byte flows. No-op when running interactively (NullProgress).
+            _queueTotalBytes = queuedRequests.Sum(e => e.TotalBytes2);
+            _bytesTransferred = 0;
+            _progressTimer.Restart();
+            _progress.OnDownloadProgress(new RiotPrefill.Api.DownloadProgressInfo
+            {
+                AppId = _progressAppId,
+                AppName = _progressAppName,
+                BytesDownloaded = 0,
+                TotalBytes = _queueTotalBytes,
+                Elapsed = _progressTimer.Elapsed,
+                State = "preparing"
+            });
 
             int retryCount = 0;
             var failedRequests = new ConcurrentBag<Request>();
@@ -119,6 +161,22 @@
                     failedRequests.Add(request);
                 }
                 progressTask.Increment(request.TotalBytes2);
+
+                // Structured byte-progress for the daemon API sink. Internally throttled by the
+                // SocketProgress (250ms) so emitting per-request here is fine; the sink coalesces.
+                var transferred = Interlocked.Add(ref _bytesTransferred, request.TotalBytes2);
+                var elapsed = _progressTimer.Elapsed;
+                var bytesPerSecond = elapsed.TotalSeconds > 0 ? transferred / elapsed.TotalSeconds : 0;
+                _progress.OnDownloadProgress(new RiotPrefill.Api.DownloadProgressInfo
+                {
+                    AppId = _progressAppId,
+                    AppName = _progressAppName,
+                    BytesDownloaded = transferred,
+                    TotalBytes = _queueTotalBytes,
+                    BytesPerSecond = bytesPerSecond,
+                    Elapsed = elapsed,
+                    State = "downloading"
+                });
             });
 
 
