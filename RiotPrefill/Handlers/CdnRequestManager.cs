@@ -55,6 +55,10 @@
             {
                 _currentCdn = "valorant.dyn.riotcdn.net";
             }
+            if (product == Patchline.LegendsOfRuneterra)
+            {
+                _currentCdn = "bacon.dyn.riotcdn.net";
+            }
         }
 
         public async Task InitializeAsync()

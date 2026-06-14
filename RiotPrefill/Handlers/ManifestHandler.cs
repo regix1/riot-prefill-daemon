@@ -80,8 +80,21 @@
 
             using var responseStream = await response.Content.ReadAsStreamAsync();
             var releaseApiResponse = await JsonSerializer.DeserializeAsync(responseStream, SerializationContext.Default.PatchlinesResponse);
-            var manifestUrl = releaseApiResponse.KeystoneProduct.platforms.Win.configurations.First(e => e.id.ToUpper() == "NA").patch_url;
 
+            // Win config selection is region-keyed for some products (LoL/Valorant use "NA"), but
+            // others (e.g. Legends of Runeterra / "bacon") expose a single region-agnostic config
+            // with id "default". Prefer NA, then default, then whatever Win config exists so we
+            // never throw "Sequence contains no matching element" for a valid Win patchline.
+            var configurations = releaseApiResponse.KeystoneProduct.platforms.Win.configurations;
+            var configuration = configurations.FirstOrDefault(e => e.id.ToUpper() == "NA")
+                                ?? configurations.FirstOrDefault(e => e.id.ToLower() == "default")
+                                ?? configurations.FirstOrDefault();
+            if (configuration == null)
+            {
+                throw new InvalidOperationException(
+                    $"No Win configuration found for patchline '{product.Value}'; cannot resolve a manifest URL.");
+            }
+            var manifestUrl = configuration.patch_url;
 
             return manifestUrl;
         }

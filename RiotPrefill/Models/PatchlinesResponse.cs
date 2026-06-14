@@ -14,6 +14,10 @@
                 {
                     return Valorant;
                 }
+                if (LegendsOfRuneterra != null)
+                {
+                    return LegendsOfRuneterra;
+                }
                 return null;
             }
         }
@@ -23,6 +27,9 @@
 
         [JsonPropertyName("keystone.products.valorant.patchlines.live")]
         public KeystoneProduct Valorant { get; set; }
+
+        [JsonPropertyName("keystone.products.bacon.patchlines.live")]
+        public KeystoneProduct LegendsOfRuneterra { get; set; }
     }
 
     public class KeystoneProduct

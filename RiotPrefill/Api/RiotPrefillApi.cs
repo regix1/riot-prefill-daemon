@@ -484,13 +484,15 @@ public sealed class RiotPrefillApi : IDisposable
     private static IReadOnlyList<Patchline> AllPatchlines { get; } = new[]
     {
         Patchline.LeagueOfLegends,
-        Patchline.Valorant
+        Patchline.Valorant,
+        Patchline.LegendsOfRuneterra
     };
 
     private static string DisplayNameFor(Patchline patchline)
     {
         if (patchline == Patchline.LeagueOfLegends) return "League of Legends";
         if (patchline == Patchline.Valorant) return "Valorant";
+        if (patchline == Patchline.LegendsOfRuneterra) return "Legends of Runeterra";
         return patchline.Value;
     }
 
