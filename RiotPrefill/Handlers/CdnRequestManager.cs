@@ -71,7 +71,7 @@
         /// false will be returned
         /// </summary>
         /// <returns>True if all downloads succeeded.  False if any downloads failed 3 times in a row.</returns>
-        public async Task<bool> DownloadQueuedChunksAsync(List<Request> queuedRequests)
+        public async Task<bool> DownloadQueuedChunksAsync(List<Request> queuedRequests, CancellationToken cancellationToken = default)
         {
             await InitializeAsync();
 
@@ -95,13 +95,13 @@
             await _ansiConsole.CreateSpectreProgress(TransferSpeedUnit.Bits).StartAsync(async ctx =>
             {
                 // Run the initial download
-                failedRequests = await AttemptDownloadAsync(ctx, "Downloading..", queuedRequests);
+                failedRequests = await AttemptDownloadAsync(ctx, "Downloading..", queuedRequests, cancellationToken: cancellationToken);
 
                 // Handle any failed requests
                 while (failedRequests.Any() && retryCount < 2)
                 {
                     retryCount++;
-                    failedRequests = await AttemptDownloadAsync(ctx, $"Retrying  {retryCount}..", failedRequests.ToList(), forceRecache: true);
+                    failedRequests = await AttemptDownloadAsync(ctx, $"Retrying  {retryCount}..", failedRequests.ToList(), forceRecache: true, cancellationToken: cancellationToken);
                 }
             });
 
@@ -123,18 +123,28 @@
         /// </summary>
         /// <param name="forceRecache">When specified, will cause the cache to delete the existing cached data for a request, and re-download it again.</param>
         /// <returns>A list of failed requests</returns>
-        public async Task<ConcurrentBag<Request>> AttemptDownloadAsync(ProgressContext ctx, string taskTitle, List<Request> requestsToDownload, bool forceRecache = false)
+        public async Task<ConcurrentBag<Request>> AttemptDownloadAsync(ProgressContext ctx, string taskTitle, List<Request> requestsToDownload, bool forceRecache = false, CancellationToken cancellationToken = default)
         {
+            // Route every request through the resolved lancache server (URL-rewrite + Host-header spoof).
+            // Without this the request connects straight to the public CDN IP and the cache is bypassed.
+            if (string.IsNullOrEmpty(_lancacheAddress))
+            {
+                throw new InvalidOperationException(
+                    $"Lancache address has not been resolved for CDN '{_currentCdn}'. Cannot route downloads through the cache.");
+            }
+
             double requestTotalSize = requestsToDownload.Sum(e => e.TotalBytes2);
             var progressTask = ctx.AddTask(taskTitle, new ProgressTaskSettings { MaxValue = requestTotalSize });
 
             var failedRequests = new ConcurrentBag<Request>();
 
-            await Parallel.ForEachAsync(requestsToDownload, new ParallelOptions { MaxDegreeOfParallelism = 20 }, body: async (request, _) =>
+            await Parallel.ForEachAsync(requestsToDownload, new ParallelOptions { MaxDegreeOfParallelism = 20, CancellationToken = cancellationToken }, body: async (request, ct) =>
             {
                 try
                 {
-                    var url = $"http://{_currentCdn}/channels/public/bundles/{request.BundleKey.ToUpper()}.bundle";
+                    // Connect to the lancache server (so it can cache), but keep the real CDN host name as the
+                    // Host header so lancache keys/serves the cached object correctly.
+                    var url = $"http://{_lancacheAddress}/channels/public/bundles/{request.BundleKey.ToUpper()}.bundle";
                     if (forceRecache)
                     {
                         url += "?nocache=1";
@@ -144,16 +154,21 @@
 
                     BuildRangeHeader(request, requestMessage);
 
-                    using var cts = new CancellationTokenSource();
-                    using var response = await _client.SendAsync(requestMessage, HttpCompletionOption.ResponseHeadersRead, cts.Token);
-                    using Stream responseStream = await response.Content.ReadAsStreamAsync(cts.Token);
+                    using var response = await _client.SendAsync(requestMessage, HttpCompletionOption.ResponseHeadersRead, ct);
+                    using Stream responseStream = await response.Content.ReadAsStreamAsync(ct);
                     response.EnsureSuccessStatusCode();
 
                     // Don't save the data anywhere, so we don't have to waste time writing it to disk.
                     var buffer = new byte[4096];
-                    while (await responseStream.ReadAsync(buffer, cts.Token) != 0)
+                    while (await responseStream.ReadAsync(buffer, ct) != 0)
                     {
                     }
+                }
+                catch (OperationCanceledException)
+                {
+                    // User-initiated cancel: propagate so Parallel.ForEachAsync stops and the caller treats
+                    // it as a cancellation rather than a per-request failure.
+                    throw;
                 }
                 catch (Exception)
                 {

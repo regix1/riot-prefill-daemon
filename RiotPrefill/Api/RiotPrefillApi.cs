@@ -476,7 +476,7 @@ public sealed class RiotPrefillApi : IDisposable
         cancellationToken.ThrowIfCancellationRequested();
 
         using var downloader = new DownloadHandler(_console, patchline, _progress, patchline.Value, DisplayNameFor(patchline));
-        await downloader.DownloadQueuedChunksAsync(combinedRequests);
+        await downloader.DownloadQueuedChunksAsync(combinedRequests, cancellationToken);
 
         return totalBytes;
     }
