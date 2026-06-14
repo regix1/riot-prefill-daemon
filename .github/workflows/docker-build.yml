@@ -54,31 +54,26 @@ jobs:
       - name: Restore dependencies
         run: dotnet restore
 
-      # On the native arm64 runner the FlatSharp.Compiler nuget ships an x86-64
-      # 'flatc' that cannot exec (Exec format error). Replace every bundled
-      # flatc with the OS-native arm64 one. Ubuntu 24.04 ships flatbuffers
-      # 23.5.26, which matches FlatSharp 7.6.0's expected flatc version.
-      - name: Replace bundled flatc with native arm64 flatc
+      # The build runs NATIVELY on arm64, but FlatSharp.Compiler 7.6.0 bundles
+      # ONLY an x86-64 'flatc' (its nuget ships linux/x64, macos, windows — no
+      # linux-arm64 build), and that flatc is a FlatSharp-specific fork that
+      # accepts flags stock distro flatc rejects (e.g. --bfbs-absolute-paths),
+      # so apt's flatbuffers-compiler is NOT a drop-in. Instead register
+      # qemu-user-static via binfmt so the bundled x86-64 flatc transparently
+      # executes during the FlatSharp codegen step. Only that tiny codegen
+      # subprocess is emulated — the .NET build/publish and Docker build all
+      # stay native arm64.
+      - name: Enable x86-64 binfmt for bundled flatc (arm64 only)
         if: matrix.platform == 'linux/arm64'
         run: |
           set -euo pipefail
           sudo apt-get update
-          sudo apt-get install -y flatbuffers-compiler
-          NATIVE_FLATC="$(command -v flatc)"
-          echo "Native flatc: $NATIVE_FLATC"
-          flatc --version
-          found=0
-          while IFS= read -r bundled; do
-            echo "Replacing bundled flatc: $bundled"
-            cp "$NATIVE_FLATC" "$bundled"
-            chmod +x "$bundled"
-            found=$((found + 1))
-          done < <(find "$HOME/.nuget/packages/flatsharp.compiler" -path '*/flatc/linux/flatc' -type f)
-          if [ "$found" -eq 0 ]; then
-            echo "ERROR: no bundled flatc found to replace" >&2
-            exit 1
-          fi
-          echo "Replaced $found bundled flatc bin/binaries"
+          sudo apt-get install -y qemu-user-static binfmt-support
+          # Verify the bundled x86-64 flatc can now exec under emulation.
+          flatc_bin="$(find "$HOME/.nuget/packages/flatsharp.compiler" -path '*/net8.0/flatc/linux/flatc' -type f | head -n1)"
+          echo "Bundled flatc: $flatc_bin"
+          chmod +x "$flatc_bin"
+          "$flatc_bin" --version
 
       - name: Build
         run: dotnet build --no-restore --configuration Release /p:TreatWarningsAsErrors=false
