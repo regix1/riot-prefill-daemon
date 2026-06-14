@@ -201,7 +201,8 @@ public sealed class RiotPrefillApi : IDisposable
             var isUpToDate = HasPrefillMarker(appId);
             long downloadSize = 0;
 
-            if (patchline != null)
+            // Only run the (network-touching) size pass for products that still need downloading.
+            if (patchline != null && !isUpToDate)
             {
                 downloadSize = await GetCachedDownloadSizeAsync(patchline, cancellationToken);
             }
@@ -364,6 +365,7 @@ public sealed class RiotPrefillApi : IDisposable
         }
 
         var updated = 0;
+        var alreadyUpToDate = 0;
         var failed = 0;
         long totalBytesTransferred = 0;
 
@@ -377,13 +379,47 @@ public sealed class RiotPrefillApi : IDisposable
                 var appInfo = new AppDownloadInfo { AppId = patchline.Value, Name = DisplayNameFor(patchline), TotalBytes = cachedTotal };
                 _progress.OnAppStarted(appInfo);
 
+                // Compare the persisted version marker against the live release version BEFORE committing to a
+                // download. PrefillPatchlineAsync resolves the live version (one cheap manifest-discovery GET)
+                // and, when the product is already at that version and Force is not set, returns Skipped WITHOUT
+                // transferring any bundle bytes.
+                var versionBefore = ReadPrefillMarker(patchline.Value);
+
                 try
                 {
-                    var bytes = await PrefillPatchlineAsync(patchline, appInfo, cancellationToken);
-                    totalBytesTransferred += bytes;
-                    WritePrefillMarker(patchline.Value);
-                    updated++;
-                    _progress.OnAppCompleted(appInfo, AppDownloadResult.Success);
+                    var outcome = await PrefillPatchlineAsync(patchline, appInfo, versionBefore, options.Force, cancellationToken);
+
+                    if (outcome.Skipped)
+                    {
+                        // Already at the live version: count it, do NOT rewrite the marker.
+                        alreadyUpToDate++;
+                        _progress.OnAppCompleted(appInfo, AppDownloadResult.AlreadyUpToDate);
+                    }
+                    else if (outcome.Success)
+                    {
+                        // Real download completed with every bundle transferred. Persist the live version marker
+                        // ONLY now — a partial/failed download (Success == false) must never write a marker, or
+                        // the next run would falsely skip a half-cached product.
+                        totalBytesTransferred += outcome.Bytes;
+                        // Only persist a marker when we have a real version token; an empty/whitespace
+                        // version (trailing-slash manifest URL) means "cannot determine version", so we
+                        // leave the marker untouched rather than writing an empty one that would falsely
+                        // skip the next run.
+                        if (!string.IsNullOrWhiteSpace(outcome.LiveVersion))
+                        {
+                            WritePrefillMarker(patchline.Value, outcome.LiveVersion);
+                        }
+                        updated++;
+                        _progress.OnAppCompleted(appInfo, AppDownloadResult.Success);
+                    }
+                    else
+                    {
+                        // Some bundles failed after retries (DownloadQueuedChunksAsync returned false). Treat as a
+                        // failure and leave the marker untouched.
+                        failed++;
+                        _progress.OnLog(LogLevel.Warning, $"Prefill incomplete for {DisplayNameFor(patchline)}: some bundles failed to download");
+                        _progress.OnAppCompleted(appInfo, AppDownloadResult.Failed);
+                    }
                 }
                 catch (OperationCanceledException)
                 {
@@ -403,7 +439,7 @@ public sealed class RiotPrefillApi : IDisposable
             {
                 TotalApps = products.Count,
                 UpdatedApps = updated,
-                AlreadyUpToDate = 0,
+                AlreadyUpToDate = alreadyUpToDate,
                 FailedApps = failed,
                 TotalBytesTransferred = totalBytesTransferred,
                 TotalTime = timer.Elapsed
@@ -448,14 +484,46 @@ public sealed class RiotPrefillApi : IDisposable
     }
 
     /// <summary>
-    /// Prefills a single patchline: discover release -> download+parse manifest -> build queue ->
-    /// coalesce per-bundle ranges -> download. Returns the total bytes in the queue. Mirrors the CLI's
-    /// DownloadPatchlineAsync but headless and with structured byte progress threaded into the handler.
+    /// Outcome of a single patchline prefill attempt.
     /// </summary>
-    private async Task<long> PrefillPatchlineAsync(Patchline patchline, AppDownloadInfo appInfo, CancellationToken cancellationToken)
+    /// <param name="Bytes">Total bytes in the download queue (0 when skipped).</param>
+    /// <param name="LiveVersion">The live release version token discovered from the manifest URL.</param>
+    /// <param name="Skipped">True when the product was already at <paramref name="LiveVersion"/> and not forced —
+    /// no bundle bytes were transferred and the marker must NOT be rewritten.</param>
+    /// <param name="Success">True when every bundle transferred successfully (only meaningful when not skipped).
+    /// False means some bundles failed after retries; the caller must NOT write a version marker.</param>
+    private readonly record struct PrefillPatchlineOutcome(long Bytes, string LiveVersion, bool Skipped, bool Success);
+
+    /// <summary>
+    /// Prefills a single patchline: discover release -> compare the live version against the persisted marker ->
+    /// (unless skipping) download+parse manifest -> build queue -> coalesce per-bundle ranges -> download.
+    /// Resolves the live version BEFORE committing to a download so an already-up-to-date product is skipped with
+    /// a single cheap manifest-discovery GET. Mirrors the CLI's DownloadPatchlineAsync but headless and with
+    /// structured byte progress threaded into the handler.
+    /// </summary>
+    private async Task<PrefillPatchlineOutcome> PrefillPatchlineAsync(
+        Patchline patchline,
+        AppDownloadInfo appInfo,
+        string? versionBefore,
+        bool force,
+        CancellationToken cancellationToken)
     {
         var manifestHandler = new ManifestHandler(_console);
         var manifestUrl = await manifestHandler.FindPatchlineReleaseAsync(patchline);
+
+        // The manifest URL's last path segment is a stable per-release version token (the same key
+        // DownloadManifestAsync uses for its on-disk cache). Compare it against the persisted marker.
+        var liveVersion = manifestUrl.Split('/').Last();
+
+        // A trailing-slash manifest URL yields an empty version token, which we cannot trust as a
+        // version identity: never skip on it (an empty persisted marker must not falsely match) and
+        // never let it propagate to WritePrefillMarker as an empty marker on the success path below.
+        if (!force && versionBefore != null && !string.IsNullOrWhiteSpace(liveVersion) && versionBefore == liveVersion)
+        {
+            // Already at the live version — skip the download entirely (no manifest download, no byte transfer).
+            return new PrefillPatchlineOutcome(0, liveVersion, Skipped: true, Success: true);
+        }
+
         var manifestPathOnDisk = await manifestHandler.DownloadManifestAsync(manifestUrl);
 
         var manifest = new ReleaseManifest(manifestPathOnDisk);
@@ -476,9 +544,11 @@ public sealed class RiotPrefillApi : IDisposable
         cancellationToken.ThrowIfCancellationRequested();
 
         using var downloader = new DownloadHandler(_console, patchline, _progress, patchline.Value, DisplayNameFor(patchline));
-        await downloader.DownloadQueuedChunksAsync(combinedRequests, cancellationToken);
+        // HONOR the bool: false = some bundles failed after retries. A partial download must be reported as a
+        // failure so the caller leaves the marker untouched (a marker write here would falsely skip next run).
+        var allSucceeded = await downloader.DownloadQueuedChunksAsync(combinedRequests, cancellationToken);
 
-        return totalBytes;
+        return new PrefillPatchlineOutcome(totalBytes, liveVersion, Skipped: false, Success: allSucceeded);
     }
 
     private static IReadOnlyList<Patchline> AllPatchlines { get; } = new[]
@@ -508,11 +578,19 @@ public sealed class RiotPrefillApi : IDisposable
     private static bool HasPrefillMarker(string slug)
         => File.Exists(PrefillMarkerPath(slug));
 
-    private static void WritePrefillMarker(string slug)
+    private static string? ReadPrefillMarker(string slug)
+    {
+        var path = PrefillMarkerPath(slug);
+        return File.Exists(path) ? File.ReadAllText(path) : null;
+    }
+
+    private static void WritePrefillMarker(string slug, string version)
     {
         try
         {
-            File.WriteAllText(PrefillMarkerPath(slug), DateTime.UtcNow.ToString("O"));
+            // Persist the live release version (the manifest URL's last path segment) so the next run can
+            // compare it and skip a product that is already at that version.
+            File.WriteAllText(PrefillMarkerPath(slug), version);
         }
         catch
         {
