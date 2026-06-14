@@ -31,13 +31,13 @@ jobs:
           - platform: linux/amd64
             runner: ubuntu-latest
             runtime: linux-x64
-          # arm64 builds on an amd64 runner and CROSS-COMPILES. FlatSharp.Compiler
-          # ships an x86-64 'flatc' binary that cannot run on a native arm runner
-          # (Exec format error). Building on amd64 lets flatc run natively while
-          # the .NET runtime/runtime image still target arm64. QEMU (below) lets
-          # buildx build the arm64 Docker image from the amd64 host.
+          # arm64 builds NATIVELY on a GitHub-hosted arm64 runner (much faster
+          # than QEMU emulation). FlatSharp.Compiler bundles an x86-64 'flatc'
+          # that cannot exec on arm64 (Exec format error), so the "Replace
+          # bundled flatc" step below swaps in the OS-native arm64 flatc
+          # (apt flatbuffers-compiler 23.5.26 matches FlatSharp 7.6.0's flatc).
           - platform: linux/arm64
-            runner: ubuntu-latest
+            runner: ubuntu-24.04-arm
             runtime: linux-arm64
 
     steps:
@@ -54,6 +54,32 @@ jobs:
       - name: Restore dependencies
         run: dotnet restore
 
+      # On the native arm64 runner the FlatSharp.Compiler nuget ships an x86-64
+      # 'flatc' that cannot exec (Exec format error). Replace every bundled
+      # flatc with the OS-native arm64 one. Ubuntu 24.04 ships flatbuffers
+      # 23.5.26, which matches FlatSharp 7.6.0's expected flatc version.
+      - name: Replace bundled flatc with native arm64 flatc
+        if: matrix.platform == 'linux/arm64'
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y flatbuffers-compiler
+          NATIVE_FLATC="$(command -v flatc)"
+          echo "Native flatc: $NATIVE_FLATC"
+          flatc --version
+          found=0
+          while IFS= read -r bundled; do
+            echo "Replacing bundled flatc: $bundled"
+            cp "$NATIVE_FLATC" "$bundled"
+            chmod +x "$bundled"
+            found=$((found + 1))
+          done < <(find "$HOME/.nuget/packages/flatsharp.compiler" -path '*/flatc/linux/flatc' -type f)
+          if [ "$found" -eq 0 ]; then
+            echo "ERROR: no bundled flatc found to replace" >&2
+            exit 1
+          fi
+          echo "Replaced $found bundled flatc bin/binaries"
+
       - name: Build
         run: dotnet build --no-restore --configuration Release /p:TreatWarningsAsErrors=false
 
@@ -61,9 +87,6 @@ jobs:
         run: |
           mkdir -p publish/$(echo ${{ matrix.platform }} | sed 's/linux\///')
           dotnet publish ${{ env.PROJECT_NAME }}/${{ env.PROJECT_NAME }}.csproj --configuration Release -o publish/$(echo ${{ matrix.platform }} | sed 's/linux\///') --self-contained --runtime ${{ matrix.runtime }} /p:TreatWarningsAsErrors=false
-
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v4
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
