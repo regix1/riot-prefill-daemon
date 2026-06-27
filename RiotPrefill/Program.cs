@@ -1,3 +1,5 @@
+#nullable enable
+
 using RiotPrefill.Api;
 
 namespace RiotPrefill
@@ -93,6 +95,10 @@ namespace RiotPrefill
                     cts.Cancel();
                 };
 
+                // Optional max-lifetime self-shutdown. If PREFILL_MAX_LIFETIME_SECONDS is a positive
+                // integer, schedule a one-shot timer that cancels the host CTS so the daemon exits cleanly.
+                using System.Threading.Timer? maxLifetimeTimer = CreateMaxLifetimeTimer(cts);
+
                 if (useTcp)
                 {
                     await DaemonMode.RunTcpAsync(tcpPort, cts.Token);
@@ -117,6 +123,39 @@ namespace RiotPrefill
                 }
                 return 1;
             }
+        }
+
+        /// <summary>
+        /// Creates a one-shot self-shutdown timer driven by the PREFILL_MAX_LIFETIME_SECONDS env var.
+        /// When it elapses, the host <see cref="CancellationTokenSource"/> is cancelled so the long-lived
+        /// daemon loop unblocks and the process exits 0. Returns null when the env var is unset/0/non-integer.
+        /// </summary>
+        private static System.Threading.Timer? CreateMaxLifetimeTimer(CancellationTokenSource cts)
+        {
+            var raw = Environment.GetEnvironmentVariable("PREFILL_MAX_LIFETIME_SECONDS");
+            if (!int.TryParse(raw, out var seconds) || seconds <= 0)
+            {
+                return null;
+            }
+
+            Console.WriteLine($"Max lifetime enabled: daemon will self-shutdown after {seconds} second(s).");
+
+            return new System.Threading.Timer(
+                _ =>
+                {
+                    Console.WriteLine($"Max lifetime of {seconds} second(s) reached. Initiating clean shutdown...");
+                    try
+                    {
+                        cts.Cancel();
+                    }
+                    catch (ObjectDisposedException)
+                    {
+                        // CTS already disposed (process is shutting down anyway) - nothing to do.
+                    }
+                },
+                null,
+                TimeSpan.FromSeconds(seconds),
+                Timeout.InfiniteTimeSpan);
         }
 
         /// <summary>
