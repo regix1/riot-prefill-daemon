@@ -7,25 +7,42 @@
         private readonly HttpClient _httpClient;
 
         public ManifestHandler(IAnsiConsole ansiConsole)
+            : this(ansiConsole, new HttpClient())
         {
-            _ansiConsole = ansiConsole;
-
-            _httpClient = new HttpClient();
-            _httpClient.DefaultRequestHeaders.Add("User-Agent", "RiotNetwork/1.0.0");
         }
 
-        public async Task<ReleaseInfo> FindLatestProductReleaseAsync(ArtifactType artifactType)
+        internal ManifestHandler(IAnsiConsole ansiConsole, HttpClient httpClient)
         {
+            _ansiConsole = ansiConsole ?? throw new ArgumentNullException(nameof(ansiConsole));
+            _httpClient = httpClient ?? throw new ArgumentNullException(nameof(httpClient));
+            if (!_httpClient.DefaultRequestHeaders.UserAgent.Any())
+            {
+                _httpClient.DefaultRequestHeaders.Add("User-Agent", "RiotNetwork/1.0.0");
+            }
+        }
+
+        public async Task<ReleaseInfo> FindLatestProductReleaseAsync(
+            ArtifactType artifactType,
+            CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
             //TODO parameterize
             var apiUrl = $"https://sieve.services.riotcdn.net/api/v1/products/lol/version-sets/NA1?q[platform]=windows";
             using var request = new HttpRequestMessage(HttpMethod.Get, apiUrl);
 
             // Send request
-            using var response = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead);
+            using var response = await _httpClient.SendAsync(
+                request,
+                HttpCompletionOption.ResponseHeadersRead,
+                cancellationToken);
             response.EnsureSuccessStatusCode();
 
-            using var responseStream = await response.Content.ReadAsStreamAsync();
-            var releaseApiResponse = await JsonSerializer.DeserializeAsync(responseStream, SerializationContext.Default.ReleaseApiResponse);
+            using var responseStream = await response.Content.ReadAsStreamAsync(cancellationToken);
+            var releaseApiResponse = await JsonSerializer.DeserializeAsync(
+                responseStream,
+                SerializationContext.Default.ReleaseApiResponse,
+                cancellationToken);
             var releases = releaseApiResponse.releases;
 
             var latestVersion = releases.Where(e => e.Platform.Contains("windows"))
@@ -37,8 +54,12 @@
             return latestVersion;
         }
 
-        public async Task<string> DownloadManifestAsync(ReleaseInfo release)
+        public async Task<string> DownloadManifestAsync(
+            ReleaseInfo release,
+            CancellationToken cancellationToken = default)
         {
+            cancellationToken.ThrowIfCancellationRequested();
+
             // Load from disk if manifest already exists
             var cachedFileName = Path.Combine(AppConfig.CacheDir, $"{release._Release.product}-{release.ArtifactTypeId}-{release.Version}.manifest");
             if (ManifestIsCached(cachedFileName))
@@ -52,12 +73,15 @@
                 var timer = Stopwatch.StartNew();
                 using var request = new HttpRequestMessage(HttpMethod.Get, release.DownloadUrl);
 
-                using var response = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead);
+                using var response = await _httpClient.SendAsync(
+                    request,
+                    HttpCompletionOption.ResponseHeadersRead,
+                    cancellationToken);
                 response.EnsureSuccessStatusCode();
 
-                responseAsBytes = await response.Content.ReadAsByteArrayAsync();
+                responseAsBytes = await response.Content.ReadAsByteArrayAsync(cancellationToken);
                 // Cache to disk
-                await File.WriteAllBytesAsync(cachedFileName, responseAsBytes);
+                await File.WriteAllBytesAsync(cachedFileName, responseAsBytes, cancellationToken);
 
                 _ansiConsole.LogMarkupLine("Downloaded manifest", timer);
             });
@@ -69,17 +93,27 @@
             return !AppConfig.NoLocalCache && File.Exists(manifestFileName);
         }
 
-        public async Task<string> FindPatchlineReleaseAsync(Patchline product)
+        public async Task<string> FindPatchlineReleaseAsync(
+            Patchline product,
+            CancellationToken cancellationToken = default)
         {
+            cancellationToken.ThrowIfCancellationRequested();
+
             var apiUrl = $"https://clientconfig.rpg.riotgames.com/api/v1/config/public?namespace=keystone.products.{product.Value}.patchlines";
             using var request = new HttpRequestMessage(HttpMethod.Get, apiUrl);
 
             // Send request
-            using var response = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead);
+            using var response = await _httpClient.SendAsync(
+                request,
+                HttpCompletionOption.ResponseHeadersRead,
+                cancellationToken);
             response.EnsureSuccessStatusCode();
 
-            using var responseStream = await response.Content.ReadAsStreamAsync();
-            var releaseApiResponse = await JsonSerializer.DeserializeAsync(responseStream, SerializationContext.Default.PatchlinesResponse);
+            using var responseStream = await response.Content.ReadAsStreamAsync(cancellationToken);
+            var releaseApiResponse = await JsonSerializer.DeserializeAsync(
+                responseStream,
+                SerializationContext.Default.PatchlinesResponse,
+                cancellationToken);
 
             // Win config selection is region-keyed for some products (LoL/Valorant use "NA"), but
             // others (e.g. Legends of Runeterra / "bacon") expose a single region-agnostic config
@@ -99,8 +133,12 @@
             return manifestUrl;
         }
 
-        public async Task<string> DownloadManifestAsync(string url)
+        public async Task<string> DownloadManifestAsync(
+            string url,
+            CancellationToken cancellationToken = default)
         {
+            cancellationToken.ThrowIfCancellationRequested();
+
             // Load from disk if manifest already exists
             var cachedFileName = Path.Combine(AppConfig.CacheDir, url.Split("/").Last());
             if (ManifestIsCached(cachedFileName))
@@ -114,12 +152,15 @@
                 var timer = Stopwatch.StartNew();
                 using var request = new HttpRequestMessage(HttpMethod.Get, url);
 
-                using var response = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead);
+                using var response = await _httpClient.SendAsync(
+                    request,
+                    HttpCompletionOption.ResponseHeadersRead,
+                    cancellationToken);
                 response.EnsureSuccessStatusCode();
 
-                responseAsBytes = await response.Content.ReadAsByteArrayAsync();
+                responseAsBytes = await response.Content.ReadAsByteArrayAsync(cancellationToken);
                 // Cache to disk
-                await File.WriteAllBytesAsync(cachedFileName, responseAsBytes);
+                await File.WriteAllBytesAsync(cachedFileName, responseAsBytes, cancellationToken);
 
                 _ansiConsole.LogMarkupLine("Downloaded manifest", timer);
             });

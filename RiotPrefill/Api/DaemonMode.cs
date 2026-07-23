@@ -11,24 +11,7 @@ public static class DaemonMode
         string socketPath = "/responses/daemon.sock",
         CancellationToken cancellationToken = default)
     {
-        Console.WriteLine("Starting RiotPrefill daemon...");
-        Console.WriteLine($"Socket path: {socketPath}");
-        Console.WriteLine();
-        Console.WriteLine("┌──────────────────────────────────────────────────────────────┐");
-        Console.WriteLine("│ UNIX SOCKET IPC                                              │");
-        Console.WriteLine("├──────────────────────────────────────────────────────────────┤");
-        Console.WriteLine("│ • Reliable bidirectional communication                       │");
-        Console.WriteLine("│ • Low latency (<1ms)                                         │");
-        Console.WriteLine("│ • Works in both host and bridge Docker network modes         │");
-        Console.WriteLine("│ • Real-time progress streaming                               │");
-        Console.WriteLine("├──────────────────────────────────────────────────────────────┤");
-        Console.WriteLine("│ SECURITY                                                     │");
-        Console.WriteLine("├──────────────────────────────────────────────────────────────┤");
-        Console.WriteLine("│ • Riot content is anonymous - NO account login         │");
-        Console.WriteLine("│ • Socket transport secured by PREFILL_SOCKET_SECRET (HMAC)   │");
-        Console.WriteLine("│ • Commands available immediately on connect                  │");
-        Console.WriteLine("└──────────────────────────────────────────────────────────────┘");
-        Console.WriteLine();
+        Console.WriteLine($"Starting RiotPrefill daemon on Unix socket {socketPath}");
 
         using var socketInterface = new SocketCommandInterface(socketPath);
 
@@ -53,23 +36,7 @@ public static class DaemonMode
         int port,
         CancellationToken cancellationToken = default)
     {
-        Console.WriteLine("Starting RiotPrefill daemon (TCP mode)...");
-        Console.WriteLine($"TCP port: {port}");
-        Console.WriteLine();
-        Console.WriteLine("┌──────────────────────────────────────────────────────────────┐");
-        Console.WriteLine("│ TCP IPC                                                     │");
-        Console.WriteLine("├──────────────────────────────────────────────────────────────┤");
-        Console.WriteLine("│ • Reliable bidirectional communication                       │");
-        Console.WriteLine("│ • Useful for Windows Docker Desktop bind mounts              │");
-        Console.WriteLine("│ • Real-time progress streaming                               │");
-        Console.WriteLine("├──────────────────────────────────────────────────────────────┤");
-        Console.WriteLine("│ SECURITY                                                     │");
-        Console.WriteLine("├──────────────────────────────────────────────────────────────┤");
-        Console.WriteLine("│ • Riot content is anonymous - NO account login         │");
-        Console.WriteLine("│ • Socket transport secured by PREFILL_SOCKET_SECRET (HMAC)   │");
-        Console.WriteLine("│ • Commands available immediately on connect                  │");
-        Console.WriteLine("└──────────────────────────────────────────────────────────────┘");
-        Console.WriteLine();
+        Console.WriteLine($"Starting RiotPrefill daemon on TCP port {port}");
 
         using var socketInterface = new SocketCommandInterface(port);
 

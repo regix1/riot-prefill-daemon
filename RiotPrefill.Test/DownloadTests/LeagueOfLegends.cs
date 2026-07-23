@@ -9,6 +9,7 @@ namespace RiotPrefill.Test.DownloadTests
 {
     [TestFixture]
     [Parallelizable(ParallelScope.All)]
+    [Explicit("Requires captured request logs.")]
     [ExcludeFromCodeCoverage, Category("SkipCI")]
     public class LeagueOfLegends
     {

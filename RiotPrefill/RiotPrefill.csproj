@@ -17,6 +17,12 @@
     <AnalysisMode>AllEnabledByDefault</AnalysisMode>
   </PropertyGroup>
 
+  <ItemGroup>
+    <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleToAttribute">
+      <_Parameter1>RiotPrefill.Test</_Parameter1>
+    </AssemblyAttribute>
+  </ItemGroup>
+
   <!-- Publish Settings (mirrors the Battle.net daemon) -->
   <PropertyGroup>
     <PublishTrimmed>true</PublishTrimmed>

@@ -265,6 +265,10 @@ public sealed class RiotPrefillApi : IDisposable
                 _downloadSizeCache[patchline.Value] = size;
                 return size;
             }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
             catch (Exception ex)
             {
                 var lancacheIp = Environment.GetEnvironmentVariable("LANCACHE_IP");
@@ -294,8 +298,8 @@ public sealed class RiotPrefillApi : IDisposable
     private async Task<long> ComputeDownloadSizeAsync(Patchline patchline, CancellationToken cancellationToken)
     {
         var manifestHandler = new ManifestHandler(_console);
-        var manifestUrl = await manifestHandler.FindPatchlineReleaseAsync(patchline);
-        var manifestPathOnDisk = await manifestHandler.DownloadManifestAsync(manifestUrl);
+        var manifestUrl = await manifestHandler.FindPatchlineReleaseAsync(patchline, cancellationToken);
+        var manifestPathOnDisk = await manifestHandler.DownloadManifestAsync(manifestUrl, cancellationToken);
 
         var manifest = new ReleaseManifest(manifestPathOnDisk);
         var downloadQueue = manifestHandler.BuildDownloadQueue(manifest);
@@ -457,12 +461,7 @@ public sealed class RiotPrefillApi : IDisposable
         catch (OperationCanceledException)
         {
             _progress.OnLog(LogLevel.Info, "Prefill operation cancelled");
-            return new PrefillResult
-            {
-                Success = false,
-                ErrorMessage = "Prefill cancelled",
-                TotalTime = timer.Elapsed
-            };
+            throw;
         }
         catch (Exception ex)
         {
@@ -509,7 +508,7 @@ public sealed class RiotPrefillApi : IDisposable
         CancellationToken cancellationToken)
     {
         var manifestHandler = new ManifestHandler(_console);
-        var manifestUrl = await manifestHandler.FindPatchlineReleaseAsync(patchline);
+        var manifestUrl = await manifestHandler.FindPatchlineReleaseAsync(patchline, cancellationToken);
 
         // The manifest URL's last path segment is a stable per-release version token (the same key
         // DownloadManifestAsync uses for its on-disk cache). Compare it against the persisted marker.
@@ -524,7 +523,7 @@ public sealed class RiotPrefillApi : IDisposable
             return new PrefillPatchlineOutcome(0, liveVersion, Skipped: true, Success: true);
         }
 
-        var manifestPathOnDisk = await manifestHandler.DownloadManifestAsync(manifestUrl);
+        var manifestPathOnDisk = await manifestHandler.DownloadManifestAsync(manifestUrl, cancellationToken);
 
         var manifest = new ReleaseManifest(manifestPathOnDisk);
         var downloadQueue = manifestHandler.BuildDownloadQueue(manifest);
