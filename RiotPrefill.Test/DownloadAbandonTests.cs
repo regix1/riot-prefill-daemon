@@ -87,6 +87,23 @@ public sealed class DownloadAbandonTests
             await downloader.DownloadQueuedChunksAsync(BuildRequests(60), cancellation.Token));
     }
 
+    [Test]
+    public void ManifestHandler_ClientTimeout_RaisesTaskCanceledWithNothingCancelled()
+    {
+        // The premise the catch filters rest on. HttpClient's own request timeout arrives as a
+        // TaskCanceledException even though the caller's token was never cancelled, so a catch on
+        // OperationCanceledException without a token check cannot tell a dead endpoint from a user cancel.
+        using var handler = new ThrowingHandler(null);
+        using var httpClient = new HttpClient(handler) { Timeout = TimeSpan.FromMilliseconds(200) };
+        var manifestHandler = new ManifestHandler(new TestConsole(), httpClient);
+        using var cancellation = new CancellationTokenSource();
+
+        Assert.ThrowsAsync<TaskCanceledException>(async () =>
+            await manifestHandler.FindPatchlineReleaseAsync(Patchline.LeagueOfLegends, cancellation.Token));
+        Assert.That(cancellation.IsCancellationRequested, Is.False,
+            "nothing asked to cancel, so this exception must not be treated as a user cancel");
+    }
+
     private static List<Request> BuildRequests(int count)
     {
         return Enumerable.Range(0, count)

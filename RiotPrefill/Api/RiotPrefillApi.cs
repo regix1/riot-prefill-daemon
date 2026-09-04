@@ -265,7 +265,7 @@ public sealed class RiotPrefillApi : IDisposable
                 _downloadSizeCache[patchline.Value] = size;
                 return size;
             }
-            catch (OperationCanceledException)
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
                 throw;
             }
@@ -425,8 +425,11 @@ public sealed class RiotPrefillApi : IDisposable
                         _progress.OnAppCompleted(appInfo, AppDownloadResult.Failed);
                     }
                 }
-                catch (OperationCanceledException)
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
                 {
+                    // Only a real cancel aborts the whole run.  HttpClient reports its own request timeout
+                    // as a TaskCanceledException, so without the token check a Riot endpoint that goes quiet
+                    // would end every remaining product instead of failing this one and moving on.
                     throw;
                 }
                 catch (Exception ex)
