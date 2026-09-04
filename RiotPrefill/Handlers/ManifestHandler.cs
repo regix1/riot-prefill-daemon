@@ -6,8 +6,19 @@
         private readonly IAnsiConsole _ansiConsole;
         private readonly HttpClient _httpClient;
 
+        // HttpClient.Timeout stops applying once ResponseHeadersRead has returned the headers, so each body
+        // read below needs its own bound.  Two values because the two kinds of response differ by orders of
+        // magnitude: the config endpoints return a few kilobytes of JSON, a manifest is a few megabytes.
+        private static readonly TimeSpan ApiBodyTimeout = TimeSpan.FromSeconds(15);
+        private static readonly TimeSpan ManifestBodyTimeout = TimeSpan.FromSeconds(90);
+
+        // Bounds the request half, up to response headers arriving.  This does NOT overlap the body bounds
+        // above, it runs before them, so a call's worst case is this plus its body bound.  The framework
+        // default of 100s is far longer than these endpoints take to answer and dominated time to failure.
+        private static readonly TimeSpan RequestTimeout = TimeSpan.FromSeconds(15);
+
         public ManifestHandler(IAnsiConsole ansiConsole)
-            : this(ansiConsole, new HttpClient())
+            : this(ansiConsole, new HttpClient { Timeout = RequestTimeout })
         {
         }
 
@@ -39,9 +50,12 @@
             response.EnsureSuccessStatusCode();
 
             using var responseStream = await response.Content.ReadAsStreamAsync(cancellationToken);
-            var releaseApiResponse = await JsonSerializer.DeserializeAsync(
-                responseStream,
-                SerializationContext.Default.ReleaseApiResponse,
+            var releaseApiResponse = await ReadWithinTimeoutAsync(
+                JsonSerializer.DeserializeAsync(
+                    responseStream,
+                    SerializationContext.Default.ReleaseApiResponse,
+                    cancellationToken).AsTask(),
+                ApiBodyTimeout,
                 cancellationToken);
             var releases = releaseApiResponse.releases;
 
@@ -79,13 +93,35 @@
                     cancellationToken);
                 response.EnsureSuccessStatusCode();
 
-                responseAsBytes = await response.Content.ReadAsByteArrayAsync(cancellationToken);
+                responseAsBytes = await ReadWithinTimeoutAsync(
+                    response.Content.ReadAsByteArrayAsync(cancellationToken),
+                    ManifestBodyTimeout,
+                    cancellationToken);
                 // Cache to disk
                 await File.WriteAllBytesAsync(cachedFileName, responseAsBytes, cancellationToken);
 
                 _ansiConsole.LogMarkupLine("Downloaded manifest", timer);
             });
             return cachedFileName;
+        }
+
+        /// <summary>
+        /// Bounds a response body read.  These requests use ResponseHeadersRead, which returns as soon as the
+        /// headers arrive and takes the body outside HttpClient.Timeout, so a server that sends headers and
+        /// then goes quiet would otherwise stall the read with nothing to end it.
+        /// </summary>
+        private static async Task<T> ReadWithinTimeoutAsync<T>(Task<T> read, TimeSpan timeout, CancellationToken cancellationToken)
+        {
+            try
+            {
+                return await read.WaitAsync(timeout, cancellationToken);
+            }
+            catch (TimeoutException)
+            {
+                throw new TimeoutException(
+                    $"Riot sent response headers and then stopped sending data for {timeout.TotalSeconds} seconds.  " +
+                    "Check that Riot's servers and the LANCache between them are reachable.");
+            }
         }
 
         private bool ManifestIsCached(string manifestFileName)
@@ -110,9 +146,12 @@
             response.EnsureSuccessStatusCode();
 
             using var responseStream = await response.Content.ReadAsStreamAsync(cancellationToken);
-            var releaseApiResponse = await JsonSerializer.DeserializeAsync(
-                responseStream,
-                SerializationContext.Default.PatchlinesResponse,
+            var releaseApiResponse = await ReadWithinTimeoutAsync(
+                JsonSerializer.DeserializeAsync(
+                    responseStream,
+                    SerializationContext.Default.PatchlinesResponse,
+                    cancellationToken).AsTask(),
+                ApiBodyTimeout,
                 cancellationToken);
 
             // Win config selection is region-keyed for some products (LoL/Valorant use "NA"), but
@@ -158,7 +197,10 @@
                     cancellationToken);
                 response.EnsureSuccessStatusCode();
 
-                responseAsBytes = await response.Content.ReadAsByteArrayAsync(cancellationToken);
+                responseAsBytes = await ReadWithinTimeoutAsync(
+                    response.Content.ReadAsByteArrayAsync(cancellationToken),
+                    ManifestBodyTimeout,
+                    cancellationToken);
                 // Cache to disk
                 await File.WriteAllBytesAsync(cachedFileName, responseAsBytes, cancellationToken);
 

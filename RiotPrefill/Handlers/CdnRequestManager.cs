@@ -5,6 +5,17 @@
         private readonly IAnsiConsole _ansiConsole;
         private readonly HttpClient _client;
 
+        // Bundles stream with ResponseHeadersRead, which puts the body outside HttpClient.Timeout, so each
+        // read needs its own bound.  This caps the gap between chunks rather than the whole transfer, so a
+        // large bundle can still take as long as it needs while a source that goes quiet gives up.
+        private static readonly TimeSpan StalledReadTimeout = TimeSpan.FromSeconds(90);
+
+        // How many requests are in flight at once, and how many may fail with nothing coming back before the
+        // source is treated as down.  Two full waves, so a single bad wave on an otherwise working cache
+        // cannot trip it.
+        private const int MaxConcurrentRequests = 20;
+        private const int FailuresBeforeSourceIsDown = MaxConcurrentRequests * 2;
+
         private readonly string _currentCdn;
 
         // Optional structured-progress sink used when the handler is driven by the daemon API layer
@@ -37,14 +48,23 @@
         /// handler runs exactly as the interactive CLI does.
         /// </summary>
         public DownloadHandler(IAnsiConsole ansiConsole, Patchline product, RiotPrefill.Api.IPrefillProgress progress, string appId, string appName)
+            : this(ansiConsole, product, progress, appId, appName, new HttpClient(), null)
+        {
+        }
+
+        internal DownloadHandler(IAnsiConsole ansiConsole, Patchline product, RiotPrefill.Api.IPrefillProgress progress, string appId, string appName, HttpClient httpClient, string lancacheAddress)
         {
             _ansiConsole = ansiConsole;
             _progress = progress ?? RiotPrefill.Api.NullProgress.Instance;
             _progressAppId = appId ?? product.Value;
             _progressAppName = appName ?? product.Name;
 
-            _client = new HttpClient();
-            _client.DefaultRequestHeaders.Add("User-Agent", "RiotNetwork/1.0.0");
+            _client = httpClient;
+            _lancacheAddress = lancacheAddress;
+            if (!_client.DefaultRequestHeaders.UserAgent.Any())
+            {
+                _client.DefaultRequestHeaders.Add("User-Agent", "RiotNetwork/1.0.0");
+            }
 
             //TODO this is ugly and I don't like having to determine which cdn like this.  Should probably be passed in with the download list.
             if (product == Patchline.LeagueOfLegends)
@@ -99,12 +119,16 @@
             await _ansiConsole.CreateSpectreProgress(TransferSpeedUnit.Bits).StartAsync(async ctx =>
             {
                 // Run the initial download
+                var attemptedCount = queuedRequests.Count;
                 failedRequests = await AttemptDownloadAsync(ctx, "Downloading..", queuedRequests, cancellationToken: cancellationToken);
 
-                // Handle any failed requests
-                while (failedRequests.Any() && retryCount < 2)
+                // Handle any failed requests.  When nothing at all got through, the source is down rather
+                // than individual bundles being flaky, so retrying the same list against it only multiplies
+                // the time spent before the user is told.
+                while (failedRequests.Any() && failedRequests.Count < attemptedCount && retryCount < 2)
                 {
                     retryCount++;
+                    attemptedCount = failedRequests.Count;
                     failedRequests = await AttemptDownloadAsync(ctx, $"Retrying  {retryCount}..", failedRequests.ToList(), forceRecache: true, cancellationToken: cancellationToken);
                 }
             });
@@ -141,9 +165,17 @@
             var progressTask = ctx.AddTask(taskTitle, new ProgressTaskSettings { MaxValue = requestTotalSize });
 
             var failedRequests = new ConcurrentBag<Request>();
+            var succeededCount = 0;
+            var sourceIsDown = 0;
 
-            await Parallel.ForEachAsync(requestsToDownload, new ParallelOptions { MaxDegreeOfParallelism = 20, CancellationToken = cancellationToken }, body: async (request, ct) =>
+            await Parallel.ForEachAsync(requestsToDownload, new ParallelOptions { MaxDegreeOfParallelism = MaxConcurrentRequests, CancellationToken = cancellationToken }, body: async (request, ct) =>
             {
+                if (Volatile.Read(ref sourceIsDown) != 0)
+                {
+                    failedRequests.Add(request);
+                    return;
+                }
+
                 try
                 {
                     // Connect to the lancache server (so it can cache), but keep the real CDN host name as the
@@ -164,21 +196,40 @@
 
                     // Don't save the data anywhere, so we don't have to waste time writing it to disk.
                     var buffer = new byte[4096];
-                    while (await responseStream.ReadAsync(buffer, ct) != 0)
+                    while (await responseStream.ReadAsync(buffer, ct).AsTask().WaitAsync(StalledReadTimeout, ct) != 0)
                     {
                     }
+
+                    Interlocked.Increment(ref succeededCount);
                 }
-                catch (OperationCanceledException)
+                catch (OperationCanceledException) when (ct.IsCancellationRequested)
                 {
                     // User-initiated cancel: propagate so Parallel.ForEachAsync stops and the caller treats
-                    // it as a cancellation rather than a per-request failure.
+                    // it as a cancellation rather than a per-request failure.  The token check is what makes
+                    // that true: HttpClient reports its own request timeout as a TaskCanceledException, which
+                    // derives from this type, so without the filter a source that goes quiet would be
+                    // rethrown as a user cancel and never counted as a failed request.
                     throw;
+                }
+                catch (TimeoutException)
+                {
+                    _ansiConsole.LogMarkupError($"Request stalled, no data for {StalledReadTimeout.TotalSeconds} seconds {request.ToString()}");
+                    failedRequests.Add(request);
                 }
                 catch (Exception)
                 {
                     _ansiConsole.LogMarkupError($"Request failed {request.ToString()}");
                     failedRequests.Add(request);
                 }
+
+                // Nothing at all has come back from this source.  Walking the rest of the queue would spend
+                // the stall timeout on every remaining request only to reach the same answer, so stop.  A
+                // single success anywhere in this attempt disables the check for the rest of it.
+                if (Volatile.Read(ref succeededCount) == 0 && failedRequests.Count >= FailuresBeforeSourceIsDown)
+                {
+                    Volatile.Write(ref sourceIsDown, 1);
+                }
+
                 progressTask.Increment(request.TotalBytes2);
 
                 // Structured byte-progress for the daemon API sink. Internally throttled by the
@@ -201,6 +252,15 @@
 
             // Making sure the progress bar is always set to its max value, in-case some unexpected error leaves the progress bar showing as unfinished
             progressTask.Increment(progressTask.MaxValue);
+
+            if (Volatile.Read(ref sourceIsDown) != 0)
+            {
+                throw new TimeoutException(
+                    $"Gave up downloading from {_lancacheAddress}.  The first {FailuresBeforeSourceIsDown} requests for {_currentCdn} all failed " +
+                    "and not one byte arrived, so the rest of the queue was abandoned rather than waiting on every remaining file.  " +
+                    "Check that the cache is running and that it can reach the internet.");
+            }
+
             return failedRequests;
         }
 
