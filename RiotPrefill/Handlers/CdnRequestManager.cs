@@ -4,6 +4,11 @@
     {
         private readonly IAnsiConsole _ansiConsole;
         private readonly HttpClient _client;
+        private readonly RequestBudget _budget;
+        private readonly string _operationId;
+        private readonly int _maxConcurrency;
+        private readonly RiotPrefill.Api.DownloadSettings _settings;
+        public long BytesTransferred => Interlocked.Read(ref _bytesTransferred);
 
         // Bundles stream with ResponseHeadersRead, which puts the body outside HttpClient.Timeout, so each
         // read needs its own bound.  This caps the gap between chunks rather than the whole transfer, so a
@@ -53,7 +58,20 @@
         }
 
         internal DownloadHandler(IAnsiConsole ansiConsole, Patchline product, RiotPrefill.Api.IPrefillProgress progress, string appId, string appName, HttpClient httpClient, string lancacheAddress)
+            : this(ansiConsole, product, progress, appId, appName, httpClient, lancacheAddress, null, "legacy",
+                MaxConcurrentRequests, new RiotPrefill.Api.DownloadSettings(AppConfig.SkipDownloads,
+                    AppConfig.DownloadWholeBundle, AppConfig.NoLocalCache, AppConfig.CacheDir))
         {
+        }
+
+        internal DownloadHandler(IAnsiConsole ansiConsole, Patchline product, RiotPrefill.Api.IPrefillProgress progress,
+            string appId, string appName, HttpClient httpClient, string lancacheAddress, RequestBudget budget,
+            string operationId, int maxConcurrency, RiotPrefill.Api.DownloadSettings settings)
+        {
+            _budget = budget;
+            _operationId = operationId;
+            _maxConcurrency = maxConcurrency;
+            _settings = settings;
             _ansiConsole = ansiConsole;
             _progress = progress ?? RiotPrefill.Api.NullProgress.Instance;
             _progressAppId = appId ?? product.Value;
@@ -97,6 +115,8 @@
         /// <returns>True if all downloads succeeded.  False if any downloads failed 3 times in a row.</returns>
         public async Task<bool> DownloadQueuedChunksAsync(List<Request> queuedRequests, CancellationToken cancellationToken = default)
         {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (_settings.SkipDownloads) return true;
             await InitializeAsync();
 
             // Emit the up-front "preparing" total so the daemon UI can show "0 B / <total>" before
@@ -168,7 +188,7 @@
             var succeededCount = 0;
             var sourceIsDown = 0;
 
-            await Parallel.ForEachAsync(requestsToDownload, new ParallelOptions { MaxDegreeOfParallelism = MaxConcurrentRequests, CancellationToken = cancellationToken }, body: async (request, ct) =>
+            await Parallel.ForEachAsync(requestsToDownload, new ParallelOptions { MaxDegreeOfParallelism = _maxConcurrency, CancellationToken = cancellationToken }, body: async (request, ct) =>
             {
                 if (Volatile.Read(ref sourceIsDown) != 0)
                 {
@@ -190,14 +210,37 @@
 
                     BuildRangeHeader(request, requestMessage);
 
+                    using var permit = _budget == null ? null : await _budget.AcquireAsync(_operationId, _maxConcurrency, ct);
                     using var response = await _client.SendAsync(requestMessage, HttpCompletionOption.ResponseHeadersRead, ct);
                     using Stream responseStream = await response.Content.ReadAsStreamAsync(ct);
                     response.EnsureSuccessStatusCode();
 
                     // Don't save the data anywhere, so we don't have to waste time writing it to disk.
                     var buffer = new byte[4096];
-                    while (await responseStream.ReadAsync(buffer, ct).AsTask().WaitAsync(StalledReadTimeout, ct) != 0)
+                    using var deadline = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                    while (true)
                     {
+                        deadline.CancelAfter(StalledReadTimeout);
+                        int read;
+                        try { read = await responseStream.ReadAsync(buffer, deadline.Token); }
+                        catch (OperationCanceledException) when (!ct.IsCancellationRequested && deadline.IsCancellationRequested)
+                        {
+                            throw new TimeoutException("Riot content response stopped sending bytes.");
+                        }
+                        if (read == 0) break;
+                        var transferred = Interlocked.Add(ref _bytesTransferred, read);
+                        progressTask.Increment(read);
+                        _progress.OnDownloadProgress(new RiotPrefill.Api.DownloadProgressInfo
+                        {
+                            AppId = _progressAppId,
+                            AppName = _progressAppName,
+                            BytesDownloaded = transferred,
+                            TotalBytes = _queueTotalBytes,
+                            BytesPerSecond = _progressTimer.Elapsed.TotalSeconds > 0
+                                ? transferred / _progressTimer.Elapsed.TotalSeconds : 0,
+                            Elapsed = _progressTimer.Elapsed,
+                            State = "downloading"
+                        });
                     }
 
                     Interlocked.Increment(ref succeededCount);
@@ -230,23 +273,6 @@
                     Volatile.Write(ref sourceIsDown, 1);
                 }
 
-                progressTask.Increment(request.TotalBytes2);
-
-                // Structured byte-progress for the daemon API sink. Internally throttled by the
-                // SocketProgress (250ms) so emitting per-request here is fine; the sink coalesces.
-                var transferred = Interlocked.Add(ref _bytesTransferred, request.TotalBytes2);
-                var elapsed = _progressTimer.Elapsed;
-                var bytesPerSecond = elapsed.TotalSeconds > 0 ? transferred / elapsed.TotalSeconds : 0;
-                _progress.OnDownloadProgress(new RiotPrefill.Api.DownloadProgressInfo
-                {
-                    AppId = _progressAppId,
-                    AppName = _progressAppName,
-                    BytesDownloaded = transferred,
-                    TotalBytes = _queueTotalBytes,
-                    BytesPerSecond = bytesPerSecond,
-                    Elapsed = elapsed,
-                    State = "downloading"
-                });
             });
 
 
@@ -264,9 +290,9 @@
             return failedRequests;
         }
 
-        private static void BuildRangeHeader(Request request, HttpRequestMessage requestMessage)
+        private void BuildRangeHeader(Request request, HttpRequestMessage requestMessage)
         {
-            if (AppConfig.DownloadWholeBundle)
+            if (_settings.DownloadWholeBundle)
             {
                 return;
             }

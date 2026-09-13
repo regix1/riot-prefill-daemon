@@ -8,12 +8,6 @@ using System.Text.Json;
 
 namespace RiotPrefill.Api;
 
-public enum SocketServerMode
-{
-    UnixSocket,
-    Tcp
-}
-
 public sealed class SocketServer : IAsyncDisposable
 {
     private static readonly HashSet<string> RedactedTypes = new(StringComparer.OrdinalIgnoreCase)
@@ -284,8 +278,8 @@ public sealed class SocketServer : IAsyncDisposable
     private static DaemonCommandLane GetCommandLane(string commandType)
         => commandType.ToLowerInvariant() switch
         {
-            "cancel-prefill" or "status" or "shutdown" => DaemonCommandLane.Control,
-            "prefill" or "set-selected-apps" or "clear-cache" => DaemonCommandLane.Serialized,
+            "cancel-prefill" or "status" or "shutdown" or "get-operation" => DaemonCommandLane.Control,
+            "prefill" or "set-selected-apps" or "clear-cache" or "get-selected-apps-status" => DaemonCommandLane.Serialized,
             _ => DaemonCommandLane.Concurrent
         };
 
@@ -305,6 +299,10 @@ public sealed class SocketServer : IAsyncDisposable
 
     private async Task SendEventToClientInternalAsync<T>(ConnectedClient client, T eventData, System.Text.Json.Serialization.Metadata.JsonTypeInfo<T> typeInfo, CancellationToken cancellationToken)
     {
+        if (!string.IsNullOrEmpty(_sharedSecret) && !client.IsAuthenticated) return;
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        deadline.CancelAfter(TimeSpan.FromSeconds(3));
+        cancellationToken = deadline.Token;
         try
         {
             await client.SendLock.WaitAsync(cancellationToken);
@@ -326,6 +324,8 @@ public sealed class SocketServer : IAsyncDisposable
         catch (Exception ex)
         {
             _progress.OnLog(LogLevel.Warning, $"Failed to send event to {client.Id}: {ex.Message}");
+            _clients.TryRemove(client.Id, out _);
+            client.Dispose();
         }
     }
 
@@ -425,6 +425,7 @@ public sealed class SocketServer : IAsyncDisposable
 
     private class ConnectedClient : IDisposable
     {
+        private int _disposed;
         public string Id { get; }
         public Socket Socket { get; }
         public NetworkStream Stream { get; }
@@ -442,22 +443,14 @@ public sealed class SocketServer : IAsyncDisposable
 
         public void Dispose()
         {
+            if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
             CancellationTokenSource.Cancel();
-            CancellationTokenSource.Dispose();
-            SendLock.Dispose();
             Stream.Dispose();
             try { Socket.Shutdown(SocketShutdown.Both); }
             catch (SocketException) { /* Socket already disconnected */ }
             Socket.Dispose();
         }
     }
-}
-
-public class SocketEvent<T>
-{
-    public string Type { get; init; } = string.Empty;
-    public T? Data { get; init; }
-    public DateTime Timestamp { get; init; } = DateTime.UtcNow;
 }
 
 public class ProgressEvent : SocketEvent<PrefillProgressUpdate>
@@ -476,11 +469,4 @@ public class AuthStateEvent : SocketEvent<AuthStateData>
         Type = "auth-state";
         Data = new AuthStateData { State = state, Message = message, DisplayName = displayName };
     }
-}
-
-public class AuthStateData
-{
-    public string State { get; init; } = string.Empty;
-    public string? Message { get; init; }
-    public string? DisplayName { get; init; }
 }

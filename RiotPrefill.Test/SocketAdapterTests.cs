@@ -190,7 +190,7 @@ public sealed class SocketAdapterTests
         Assert.That(debugLines.Any(line => line.Contains("visible", StringComparison.Ordinal)), Is.True);
     }
 
-    private sealed class FramedClient : IAsyncDisposable
+    internal sealed class FramedClient : IAsyncDisposable
     {
         private readonly TcpClient _client;
         private readonly NetworkStream _stream;

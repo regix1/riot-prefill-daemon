@@ -30,35 +30,35 @@ public sealed class RiotPrefillApi : IDisposable
     private bool _isInitialized;
     private bool _isDisposed;
 
-    /// <summary>
-    /// True while <see cref="PrefillAsync"/> is actively running. The download-size estimate in
-    /// <see cref="GetSelectedAppsStatusAsync"/> toggles the process-global <see cref="AppConfig.SkipDownloads"/>
-    /// flag (via the size pass). We must NEVER run that metadata-only pass while a prefill is active, or the
-    /// running prefill would silently skip all transfers. Set/cleared via <see cref="Interlocked"/>.
-    /// </summary>
     private int _isPrefilling;
+    private readonly SemaphoreSlim _sizePassLock = new(1, 1);
+    private readonly ConcurrentDictionary<string, long> _downloadSizeCache = new();
+    private readonly ItemClaims _claims = new();
+    private readonly RequestBudget _budget;
+    private readonly Func<HttpClient> _createClient;
+    private readonly string? _lancacheAddress;
+    private readonly DownloadSettings _settings;
+    private readonly Action<string, string>? _replace;
 
-    /// <summary>
-    /// Serializes the <see cref="AppConfig.SkipDownloads"/>-mutating size pass so two concurrent
-    /// <c>get-selected-apps-status</c> polls cannot clobber each other's save/restore of the global flag.
-    /// </summary>
-    private readonly SemaphoreSlim _sizePassLock = new SemaphoreSlim(1, 1);
-
-    /// <summary>
-    /// Per-product cached download-size estimate, keyed by patchline slug. A status poll computes the size
-    /// once (build the manifest + download queue) and reuses it on subsequent polls.
-    /// </summary>
-    private readonly ConcurrentDictionary<string, long> _downloadSizeCache = new ConcurrentDictionary<string, long>();
-
-    /// <summary>
-    /// True while a prefill operation is running. Used to suppress the SkipDownloads-mutating size pass.
-    /// </summary>
     public bool IsPrefilling => Volatile.Read(ref _isPrefilling) != 0;
 
     public RiotPrefillApi(IPrefillProgress? progress = null)
+        : this(progress, PrefillProtocol.FromEnvironment(20), () => new HttpClient(), AppConfig.CacheDir, null)
+    {
+    }
+
+    internal RiotPrefillApi(IPrefillProgress? progress, PrefillProtocol protocol,
+        Func<HttpClient> createClient, string cacheDirectory, string? lancacheAddress,
+        Action<string, string>? replace = null)
     {
         _progress = progress ?? NullProgress.Instance;
         _console = new ApiConsoleAdapter(_progress);
+        _budget = new RequestBudget(protocol.MaxConcurrentRequests);
+        _createClient = createClient;
+        _lancacheAddress = lancacheAddress;
+        _settings = new DownloadSettings(false, true, AppConfig.NoLocalCache, cacheDirectory);
+        _replace = replace;
+        Directory.CreateDirectory(cacheDirectory);
     }
 
     public bool IsInitialized => _isInitialized;
@@ -106,10 +106,10 @@ public sealed class RiotPrefillApi : IDisposable
         ThrowIfNotInitialized();
         ThrowIfDisposed();
 
-        if (_selectedAppsCache != null && _selectedAppsCache.Count > 0)
+        if (_selectedAppsCache != null)
         {
             _progress.OnLog(LogLevel.Info, $"GetSelectedApps: Returning {_selectedAppsCache.Count} cached apps");
-            return _selectedAppsCache;
+            return _selectedAppsCache.ToList();
         }
 
         // Riot has no persisted selection file wired up in the upstream tool; default to the full
@@ -224,236 +224,129 @@ public sealed class RiotPrefillApi : IDisposable
         };
     }
 
-    /// <summary>
-    /// Returns the per-product download-size estimate, using a slug-keyed cache to avoid repeated
-    /// manifest round-trips. SAFETY: the size pass sets the process-global <see cref="AppConfig.SkipDownloads"/>
-    /// so the queue is built but no bytes transfer. A concurrent live prefill reads that same flag, so we MUST
-    /// NOT run the pass while <see cref="IsPrefilling"/> is true. The pass is serialized behind
-    /// <see cref="_sizePassLock"/> so two concurrent polls cannot clobber the flag's save/restore.
-    /// </summary>
     private async Task<long> GetCachedDownloadSizeAsync(Patchline patchline, CancellationToken cancellationToken)
     {
-        if (_downloadSizeCache.TryGetValue(patchline.Value, out var cachedSize))
-        {
-            return cachedSize;
-        }
-
-        if (IsPrefilling)
-        {
-            _progress.OnLog(LogLevel.Info, $"Prefill in progress - skipping size estimate for {DisplayNameFor(patchline)}");
-            return 0;
-        }
-
+        if (_downloadSizeCache.TryGetValue(patchline.Value, out var size)) return size;
         await _sizePassLock.WaitAsync(cancellationToken);
         try
         {
-            if (_downloadSizeCache.TryGetValue(patchline.Value, out cachedSize))
-            {
-                return cachedSize;
-            }
-            if (IsPrefilling)
-            {
-                _progress.OnLog(LogLevel.Info, $"Prefill started - skipping size estimate for {DisplayNameFor(patchline)}");
-                return 0;
-            }
-
-            var previousSkip = AppConfig.SkipDownloads;
-            AppConfig.SkipDownloads = true;
-            try
-            {
-                var size = await ComputeDownloadSizeAsync(patchline, cancellationToken);
-                _downloadSizeCache[patchline.Value] = size;
-                return size;
-            }
-            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-            {
-                throw;
-            }
-            catch (Exception ex)
-            {
-                var lancacheIp = Environment.GetEnvironmentVariable("LANCACHE_IP");
-                var lancacheInfo = string.IsNullOrWhiteSpace(lancacheIp)
-                    ? "LANCACHE_IP not set (using DNS auto-detect)"
-                    : $"LANCACHE_IP={lancacheIp}";
-                var inner = ex.InnerException != null ? $" | Inner: {ex.InnerException.Message}" : string.Empty;
-                _progress.OnLog(LogLevel.Warning,
-                    $"Failed to get size for {DisplayNameFor(patchline)} [{lancacheInfo}]: {ex.Message}{inner}");
-                return 0;
-            }
-            finally
-            {
-                AppConfig.SkipDownloads = previousSkip;
-            }
+            if (_downloadSizeCache.TryGetValue(patchline.Value, out size)) return size;
+            size = await ComputeDownloadSizeAsync(patchline, cancellationToken);
+            _downloadSizeCache[patchline.Value] = size;
+            return size;
         }
-        finally
-        {
-            _sizePassLock.Release();
-        }
+        finally { _sizePassLock.Release(); }
     }
 
-    /// <summary>
-    /// Builds the download queue for a patchline and returns its total byte size, WITHOUT transferring
-    /// any bytes. Mirrors the CLI's discovery -> manifest download -> parse -> BuildDownloadQueue path.
-    /// </summary>
     private async Task<long> ComputeDownloadSizeAsync(Patchline patchline, CancellationToken cancellationToken)
     {
-        var manifestHandler = new ManifestHandler(_console);
+        using var manifestHandler = new ManifestHandler(_console, _createClient(),
+            _budget, "size", 1, _settings with { SkipDownloads = true }, _replace);
         var manifestUrl = await manifestHandler.FindPatchlineReleaseAsync(patchline, cancellationToken);
         var manifestPathOnDisk = await manifestHandler.DownloadManifestAsync(manifestUrl, cancellationToken);
-
         var manifest = new ReleaseManifest(manifestPathOnDisk);
-        var downloadQueue = manifestHandler.BuildDownloadQueue(manifest);
-
-        return downloadQueue.Sum(e => e.TotalBytes);
+        return manifestHandler.BuildDownloadQueue(manifest).Sum(e => e.TotalBytes);
     }
 
     /// <summary>
     /// Runs the prefill operation, emitting structured progress events per product.
     /// </summary>
-    public async Task<PrefillResult> PrefillAsync(
-        PrefillOptions? options = null,
-        CancellationToken cancellationToken = default)
+    public Task<PrefillResult> PrefillAsync(PrefillOptions? options = null, CancellationToken cancellationToken = default)
+        => PrefillAsync(options ?? new PrefillOptions(), null, cancellationToken);
+
+    internal async Task<PrefillResult> PrefillAsync(PrefillOptions options, PrefillRun? run,
+        CancellationToken cancellationToken)
     {
         ThrowIfNotInitialized();
         ThrowIfDisposed();
+        var progress = (IPrefillProgress?)run ?? _progress;
+        var force = run?.Options.Force ?? options.Force;
+        var operationId = run?.Progress.Snapshot.OperationId ?? "legacy";
+        var maxConcurrency = run?.Options.MaxConcurrency ?? _budget.MaxConcurrentRequests;
+        var selected = run?.Options.AppIds ?? (options.Products is { Count: > 0 }
+            ? options.Products.ToArray() : options.DownloadAllOwnedGames
+                ? AllPatchlines.Select(p => p.Value).ToArray() : GetSelectedApps().ToArray());
+        if (run?.Options.Selection == "all") selected = AllPatchlines.Select(p => p.Value).ToArray();
+        var products = selected.Select(id => ResolvePatchline(id)
+            ?? throw new ArgumentException($"Unknown Riot patchline: {id}")).Distinct().ToArray();
+        if (run != null && !run.Progress.Snapshot.SelectionResolved)
+            run.Progress.ResolveSelection(products.Select(p => p.Value));
+        if (products.Length == 0)
+            return new PrefillResult { Success = false, ErrorMessage = "No apps selected for prefill" };
 
-        options ??= new PrefillOptions();
-
-        Interlocked.Exchange(ref _isPrefilling, 1);
-        try
-        {
-
-        _progress.OnOperationStarted("Prefill operation");
         var timer = Stopwatch.StartNew();
-
-        // The whole-bundle download path is what the CLI uses for a real prefill.
-        AppConfig.DownloadWholeBundle = true;
-        // Ensure a live prefill is never in skip-downloads mode (a prior size pass restores the flag,
-        // but be explicit so a stray flag can't silently no-op the transfer).
-        AppConfig.SkipDownloads = false;
-
-        // Resolve the set of patchlines to prefill.
-        List<Patchline> products;
-        if (options.Products is { Count: > 0 })
-        {
-            products = options.Products
-                .Select(ResolvePatchline)
-                .Where(p => p != null)
-                .Select(p => p!)
-                .ToList();
-        }
-        else if (options.DownloadAllOwnedGames)
-        {
-            products = AllPatchlines.ToList();
-        }
-        else
-        {
-            products = GetSelectedApps()
-                .Select(ResolvePatchline)
-                .Where(p => p != null)
-                .Select(p => p!)
-                .ToList();
-        }
-
-        products = products.Distinct().ToList();
-
-        if (products.Count == 0)
-        {
-            _progress.OnError("No apps selected for prefill. Select apps first or pass 'all'.");
-            return new PrefillResult
-            {
-                Success = false,
-                ErrorMessage = "No apps selected for prefill",
-                TotalTime = timer.Elapsed
-            };
-        }
-
         var updated = 0;
         var alreadyUpToDate = 0;
         var failed = 0;
         long totalBytesTransferred = 0;
-
+        Interlocked.Increment(ref _isPrefilling);
+        progress.OnOperationStarted("Prefill operation");
         try
         {
             foreach (var patchline in products)
             {
                 cancellationToken.ThrowIfCancellationRequested();
-
-                var cachedTotal = _downloadSizeCache.TryGetValue(patchline.Value, out var estTotal) ? estTotal : 0;
-                var appInfo = new AppDownloadInfo { AppId = patchline.Value, Name = DisplayNameFor(patchline), TotalBytes = cachedTotal };
-                _progress.OnAppStarted(appInfo);
-
-                // Compare the persisted version marker against the live release version BEFORE committing to a
-                // download. PrefillPatchlineAsync resolves the live version (one cheap manifest-discovery GET)
-                // and, when the product is already at that version and Force is not set, returns Skipped WITHOUT
-                // transferring any bundle bytes.
-                var versionBefore = ReadPrefillMarker(patchline.Value);
-
+                var app = new AppDownloadInfo { AppId = patchline.Value, Name = DisplayNameFor(patchline) };
+                var claim = _claims.TryClaim(operationId, new[] { patchline.Value });
+                if (claim == null)
+                {
+                    progress.OnAppCompleted(app, AppDownloadResult.Skipped);
+                    continue;
+                }
+                using var legacyClaim = run == null ? claim : null;
+                run?.Hold(claim);
+                progress.OnAppStarted(app);
                 try
                 {
-                    var outcome = await PrefillPatchlineAsync(patchline, appInfo, versionBefore, options.Force, cancellationToken);
-
+                    var outcome = await PrefillPatchlineAsync(patchline, app, ReadPrefillMarker(patchline.Value),
+                        force, progress, operationId, maxConcurrency, cancellationToken);
+                    totalBytesTransferred += outcome.Bytes;
+                    cancellationToken.ThrowIfCancellationRequested();
                     if (outcome.Skipped)
                     {
-                        // Already at the live version: count it, do NOT rewrite the marker.
                         alreadyUpToDate++;
-                        _progress.OnAppCompleted(appInfo, AppDownloadResult.AlreadyUpToDate);
+                        progress.OnAppCompleted(app, AppDownloadResult.AlreadyUpToDate);
                     }
                     else if (outcome.Success)
                     {
-                        // Real download completed with every bundle transferred. Persist the live version marker
-                        // ONLY now — a partial/failed download (Success == false) must never write a marker, or
-                        // the next run would falsely skip a half-cached product.
-                        totalBytesTransferred += outcome.Bytes;
-                        // Only persist a marker when we have a real version token; an empty/whitespace
-                        // version (trailing-slash manifest URL) means "cannot determine version", so we
-                        // leave the marker untouched rather than writing an empty one that would falsely
-                        // skip the next run.
                         if (!string.IsNullOrWhiteSpace(outcome.LiveVersion))
                         {
-                            WritePrefillMarker(patchline.Value, outcome.LiveVersion);
+                            if (!await WritePrefillMarkerAsync(app, outcome.LiveVersion, run, cancellationToken)) break;
+                        }
+                        else if (run != null && !run.OnAppCompleted(app, AppDownloadResult.Success, null))
+                        {
+                            break;
                         }
                         updated++;
-                        _progress.OnAppCompleted(appInfo, AppDownloadResult.Success);
+                        if (run == null) progress.OnAppCompleted(app, AppDownloadResult.Success);
                     }
                     else
                     {
-                        // Some bundles failed after retries (DownloadQueuedChunksAsync returned false). Treat as a
-                        // failure and leave the marker untouched.
                         failed++;
-                        _progress.OnLog(LogLevel.Warning, $"Prefill incomplete for {DisplayNameFor(patchline)}: some bundles failed to download");
-                        _progress.OnAppCompleted(appInfo, AppDownloadResult.Failed);
+                        progress.OnAppCompleted(app, AppDownloadResult.Failed);
                     }
                 }
-                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-                {
-                    // Only a real cancel aborts the whole run.  HttpClient reports its own request timeout
-                    // as a TaskCanceledException, so without the token check a Riot endpoint that goes quiet
-                    // would end every remaining product instead of failing this one and moving on.
-                    throw;
-                }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
                 catch (Exception ex)
                 {
                     failed++;
-                    _progress.OnLog(LogLevel.Warning, $"Prefill failed for {DisplayNameFor(patchline)}: {ex.Message}");
-                    _progress.OnAppCompleted(appInfo, AppDownloadResult.Failed);
+                    progress.OnLog(LogLevel.Warning, $"Prefill failed for {app.Name}: {ex.Message}");
+                    progress.OnAppCompleted(app, AppDownloadResult.Failed);
+                }
+                finally
+                {
+                    _downloadSizeCache.TryRemove(patchline.Value, out _);
                 }
             }
-
-            timer.Stop();
-
-            _progress.OnPrefillCompleted(new PrefillSummary
+            progress.OnPrefillCompleted(new PrefillSummary
             {
-                TotalApps = products.Count,
+                TotalApps = products.Length,
                 UpdatedApps = updated,
                 AlreadyUpToDate = alreadyUpToDate,
                 FailedApps = failed,
                 TotalBytesTransferred = totalBytesTransferred,
                 TotalTime = timer.Elapsed
             });
-
-            _progress.OnOperationCompleted("Prefill operation", timer.Elapsed);
-
             return new PrefillResult
             {
                 Success = failed == 0,
@@ -461,97 +354,38 @@ public sealed class RiotPrefillApi : IDisposable
                 TotalTime = timer.Elapsed
             };
         }
-        catch (OperationCanceledException)
-        {
-            _progress.OnLog(LogLevel.Info, "Prefill operation cancelled");
-            throw;
-        }
-        catch (Exception ex)
-        {
-            _progress.OnError("Prefill operation failed", ex);
-            return new PrefillResult
-            {
-                Success = false,
-                ErrorMessage = ex.Message,
-                TotalTime = timer.Elapsed
-            };
-        }
-
-        }
         finally
         {
-            _downloadSizeCache.Clear();
-            Interlocked.Exchange(ref _isPrefilling, 0);
+            Interlocked.Decrement(ref _isPrefilling);
         }
     }
 
-    /// <summary>
-    /// Outcome of a single patchline prefill attempt.
-    /// </summary>
-    /// <param name="Bytes">Total bytes in the download queue (0 when skipped).</param>
-    /// <param name="LiveVersion">The live release version token discovered from the manifest URL.</param>
-    /// <param name="Skipped">True when the product was already at <paramref name="LiveVersion"/> and not forced —
-    /// no bundle bytes were transferred and the marker must NOT be rewritten.</param>
-    /// <param name="Success">True when every bundle transferred successfully (only meaningful when not skipped).
-    /// False means some bundles failed after retries; the caller must NOT write a version marker.</param>
-    private readonly record struct PrefillPatchlineOutcome(long Bytes, string LiveVersion, bool Skipped, bool Success);
-
-    /// <summary>
-    /// Prefills a single patchline: discover release -> compare the live version against the persisted marker ->
-    /// (unless skipping) download+parse manifest -> build queue -> coalesce per-bundle ranges -> download.
-    /// Resolves the live version BEFORE committing to a download so an already-up-to-date product is skipped with
-    /// a single cheap manifest-discovery GET. Mirrors the CLI's DownloadPatchlineAsync but headless and with
-    /// structured byte progress threaded into the handler.
-    /// </summary>
-    private async Task<PrefillPatchlineOutcome> PrefillPatchlineAsync(
-        Patchline patchline,
-        AppDownloadInfo appInfo,
-        string? versionBefore,
-        bool force,
+    private async Task<PrefillPatchlineOutcome> PrefillPatchlineAsync(Patchline patchline, AppDownloadInfo appInfo,
+        string? versionBefore, bool force, IPrefillProgress progress, string operationId, int maxConcurrency,
         CancellationToken cancellationToken)
     {
-        var manifestHandler = new ManifestHandler(_console);
+        var console = new ApiConsoleAdapter(progress);
+        using var manifestHandler = new ManifestHandler(console, _createClient(), _budget,
+            operationId, maxConcurrency, _settings, _replace);
         var manifestUrl = await manifestHandler.FindPatchlineReleaseAsync(patchline, cancellationToken);
-
-        // The manifest URL's last path segment is a stable per-release version token (the same key
-        // DownloadManifestAsync uses for its on-disk cache). Compare it against the persisted marker.
         var liveVersion = manifestUrl.Split('/').Last();
-
-        // A trailing-slash manifest URL yields an empty version token, which we cannot trust as a
-        // version identity: never skip on it (an empty persisted marker must not falsely match) and
-        // never let it propagate to WritePrefillMarker as an empty marker on the success path below.
         if (!force && versionBefore != null && !string.IsNullOrWhiteSpace(liveVersion) && versionBefore == liveVersion)
-        {
-            // Already at the live version — skip the download entirely (no manifest download, no byte transfer).
-            return new PrefillPatchlineOutcome(0, liveVersion, Skipped: true, Success: true);
-        }
+            return new PrefillPatchlineOutcome(0, liveVersion, true, true);
 
         var manifestPathOnDisk = await manifestHandler.DownloadManifestAsync(manifestUrl, cancellationToken);
-
         var manifest = new ReleaseManifest(manifestPathOnDisk);
         var downloadQueue = manifestHandler.BuildDownloadQueue(manifest);
-
-        var totalBytes = downloadQueue.Sum(e => e.TotalBytes);
-
-        // Combine requests to the same bundle into a single multi-range request (same as the CLI).
-        var combinedRequests = new List<Request>();
-        foreach (var bundle in downloadQueue.GroupBy(e => e.BundleKey).ToList())
-        {
-            var ranges = bundle.OrderBy(e => e.LowerByteRange)
-                               .Select(e => new ByteRange(e.LowerByteRange, e.UpperByteRange))
-                               .ToList();
-            combinedRequests.Add(new Request(bundle.Key, ranges));
-        }
-
+        var requests = downloadQueue.GroupBy(e => e.BundleKey).Select(bundle => new Request(bundle.Key,
+            bundle.OrderBy(e => e.LowerByteRange).Select(e => new ByteRange(e.LowerByteRange, e.UpperByteRange)).ToList())).ToList();
         cancellationToken.ThrowIfCancellationRequested();
-
-        using var downloader = new DownloadHandler(_console, patchline, _progress, patchline.Value, DisplayNameFor(patchline));
-        // HONOR the bool: false = some bundles failed after retries. A partial download must be reported as a
-        // failure so the caller leaves the marker untouched (a marker write here would falsely skip next run).
-        var allSucceeded = await downloader.DownloadQueuedChunksAsync(combinedRequests, cancellationToken);
-
-        return new PrefillPatchlineOutcome(totalBytes, liveVersion, Skipped: false, Success: allSucceeded);
+        using var downloader = new DownloadHandler(console, patchline, progress, appInfo.AppId, appInfo.Name,
+            _createClient(), _lancacheAddress, _budget, operationId, maxConcurrency, _settings);
+        var success = await downloader.DownloadQueuedChunksAsync(requests, cancellationToken);
+        return new PrefillPatchlineOutcome(downloader.BytesTransferred, liveVersion, false, success);
     }
+
+    internal static string Canonicalize(string appId)
+        => ResolvePatchline(appId)?.Value ?? throw new ArgumentException($"Unknown Riot patchline: {appId}");
 
     private static IReadOnlyList<Patchline> AllPatchlines { get; } = new[]
     {
@@ -574,32 +408,23 @@ public sealed class RiotPrefillApi : IDisposable
             .FirstOrDefault(p => string.Equals(p.Value, appId, StringComparison.OrdinalIgnoreCase));
     }
 
-    private static string PrefillMarkerPath(string slug)
-        => Path.Combine(AppConfig.CacheDir, $"prefilledVersion-{slug}.txt");
+    private string PrefillMarkerPath(string slug)
+        => Path.Combine(_settings.CacheDirectory, $"prefilledVersion-{slug}.txt");
 
-    private static bool HasPrefillMarker(string slug)
+    private bool HasPrefillMarker(string slug)
         => File.Exists(PrefillMarkerPath(slug));
 
-    private static string? ReadPrefillMarker(string slug)
+    private string? ReadPrefillMarker(string slug)
     {
         var path = PrefillMarkerPath(slug);
         return File.Exists(path) ? File.ReadAllText(path) : null;
     }
 
-    private static void WritePrefillMarker(string slug, string version)
-    {
-        try
-        {
-            // Persist the live release version (the manifest URL's last path segment) so the next run can
-            // compare it and skip a product that is already at that version.
-            File.WriteAllText(PrefillMarkerPath(slug), version);
-        }
-        catch
-        {
-            // Best-effort marker; failure to write it only means the next status poll reports
-            // "not up to date", which is harmless.
-        }
-    }
+    private Task<bool> WritePrefillMarkerAsync(AppDownloadInfo app, string version, PrefillRun? run,
+        CancellationToken cancellationToken)
+        => ManifestHandler.CommitAsync(PrefillMarkerPath(app.AppId), System.Text.Encoding.UTF8.GetBytes(version),
+            cancellationToken, _replace,
+            run == null ? null : commit => run.OnAppCompleted(app, AppDownloadResult.Success, commit));
 
     private static (int FileCount, long TotalBytes)? GetCacheStats()
     {
@@ -672,6 +497,7 @@ public sealed class RiotPrefillApi : IDisposable
 
         Shutdown();
         _sizePassLock.Dispose();
+        _budget.Dispose();
         _isDisposed = true;
     }
 
@@ -686,65 +512,4 @@ public sealed class RiotPrefillApi : IDisposable
         if (_isDisposed)
             throw new ObjectDisposedException(nameof(RiotPrefillApi));
     }
-}
-
-public class PrefillOptions
-{
-    public bool DownloadAllOwnedGames { get; set; }
-    public bool Force { get; set; }
-
-    /// <summary>
-    /// Optional explicit list of patchline slugs to prefill. When empty, falls back to the selected
-    /// apps (or the full catalog when <see cref="DownloadAllOwnedGames"/> is set).
-    /// </summary>
-    public List<string>? Products { get; set; }
-}
-
-public class PrefillResult
-{
-    public bool Success { get; init; }
-    public string? ErrorMessage { get; init; }
-    public TimeSpan TotalTime { get; init; }
-}
-
-public class ClearCacheResult
-{
-    public bool Success { get; init; }
-    public int FileCount { get; init; }
-    public long BytesCleared { get; init; }
-    public string? Message { get; init; }
-}
-
-public class AppStatus
-{
-    public string AppId { get; init; } = "";
-    public string Name { get; init; } = "";
-    public long DownloadSize { get; init; }
-    public bool IsUpToDate { get; init; }
-}
-
-public class SelectedAppsStatus
-{
-    public List<AppStatus> Apps { get; init; } = new();
-    public long TotalDownloadSize { get; init; }
-    public string? Message { get; init; }
-}
-
-public class OwnedGame
-{
-    public string AppId { get; init; } = string.Empty;
-    public string Name { get; init; } = string.Empty;
-}
-
-public class CacheStatusResult
-{
-    public List<AppCacheStatus> Apps { get; init; } = new();
-    public string? Message { get; init; }
-}
-
-public class AppCacheStatus
-{
-    public string AppId { get; init; } = "";
-    public string Name { get; init; } = "";
-    public bool IsUpToDate { get; init; }
 }

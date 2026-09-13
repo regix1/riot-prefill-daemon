@@ -36,7 +36,7 @@ namespace RiotPrefill.CliCommands
             _ansiConsole.LogMarkupLine($"Starting {Cyan(currentPatchline.Name)}");
 
             // Downloading manifest
-            var manifestHandler = new ManifestHandler(_ansiConsole);
+            using var manifestHandler = new ManifestHandler(_ansiConsole);
             var manifestUrl = await manifestHandler.FindPatchlineReleaseAsync(currentPatchline);
             var manifestPathOnDisk = await manifestHandler.DownloadManifestAsync(manifestUrl);
 
