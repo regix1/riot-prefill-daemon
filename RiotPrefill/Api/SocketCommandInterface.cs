@@ -401,6 +401,10 @@ public sealed class SocketCommandInterface : IDisposable
                 ?? throw new ArgumentException("appIds must be a JSON array.");
             ids = supplied.Select(RiotPrefillApi.Canonicalize).ToArray();
         }
+        var cachedApps = parameters.TryGetValue("cachedApps", out var cachedJson)
+            ? JsonSerializer.Deserialize(cachedJson, DaemonSerializationContext.Default.ListCachedAppInput)
+                ?? throw new ArgumentException("cachedApps must be a JSON array.")
+            : [];
         var concurrency = _protocol.MaxConcurrentRequests;
         if (parameters.TryGetValue("maxConcurrency", out var maximum)
             && !int.TryParse(maximum, out concurrency)) return Reject(request, "invalid-concurrency");
@@ -412,6 +416,7 @@ public sealed class SocketCommandInterface : IDisposable
             AppIds = ids,
             Selection = selection,
             Force = force,
+            CachedApps = cachedApps,
             MaxConcurrency = concurrency
         }, _progress, (snapshot, token) => _socketServer.BroadcastProgressAsync(new ProgressEvent(PrefillRun.ToUpdate(snapshot)), token));
         cancellationToken.ThrowIfCancellationRequested();
@@ -496,11 +501,12 @@ public sealed class SocketCommandInterface : IDisposable
 
     private async Task<CommandResponse> HandleCheckCacheStatusAsync(CommandRequest request, CancellationToken cancellationToken)
     {
-        List<string> appIds;
-        var appIdsJson = request.Parameters?.GetValueOrDefault("appIds");
-        if (!string.IsNullOrEmpty(appIdsJson))
+        List<CachedAppInput> cachedApps;
+        var cachedAppsJson = request.Parameters?.GetValueOrDefault("cachedApps");
+        if (!string.IsNullOrEmpty(cachedAppsJson))
         {
-            appIds = JsonSerializer.Deserialize(appIdsJson, DaemonSerializationContext.Default.ListString) ?? new List<string>();
+            cachedApps = JsonSerializer.Deserialize(cachedAppsJson, DaemonSerializationContext.Default.ListCachedAppInput)
+                ?? throw new ArgumentException("cachedApps must be a JSON array.");
         }
         else
         {
@@ -514,7 +520,7 @@ public sealed class SocketCommandInterface : IDisposable
             };
         }
 
-        var status = await _api.CheckCacheStatusAsync(appIds, cancellationToken);
+        var status = await _api.CheckCacheStatusAsync(cachedApps, cancellationToken);
 
         return new CommandResponse
         {

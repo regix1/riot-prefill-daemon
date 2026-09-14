@@ -87,7 +87,8 @@ internal sealed class PrefillRun : IPrefillProgress
                 Result = outcome,
                 Reason = outcome == "skipped" ? "skippedOverlap" : null,
                 BytesTransferred = _bytes.GetValueOrDefault(app.AppId),
-                TotalBytes = _totals.GetValueOrDefault(app.AppId)
+                TotalBytes = _totals.GetValueOrDefault(app.AppId),
+                CacheRevision = app.CacheRevision
             };
             return commit == null ? Progress.UpdateItem(item) : Progress.TryCommitItem(item, commit);
         }
@@ -114,6 +115,7 @@ internal sealed class PrefillRun : IPrefillProgress
             Reason = terminal ? snapshot.Reason : item?.Reason,
             BytesDownloaded = item?.BytesTransferred ?? 0,
             TotalBytes = item?.TotalBytes ?? 0,
+            CacheRevision = item?.CacheRevision,
             PercentComplete = item?.TotalBytes > 0 ? 100d * item.BytesTransferred / item.TotalBytes.Value : 0,
             BytesPerSecond = (snapshot.UpdatedAt - snapshot.StartedAt).TotalSeconds > 0
                 ? snapshot.BytesTransferred / (snapshot.UpdatedAt - snapshot.StartedAt).TotalSeconds : 0,

@@ -2,7 +2,9 @@
 
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
+using System.Text.Json;
 using System.Threading;
 using LancachePrefill.Common;
 using RiotPrefill.Api;
@@ -92,5 +94,57 @@ public sealed class PrefillRunTests
         await completion.WaitAsync(TimeSpan.FromSeconds(5));
         using var after = claims.TryClaim("second", new[] { "valorant" });
         Assert.That(after, Is.Not.Null);
+    }
+
+    [Test]
+    public async Task CacheRevisionSurvivesOperationRecovery()
+    {
+        var protocol = new PrefillProtocol(20);
+        var run = new PrefillRun(Guid.NewGuid().ToString(), protocol,
+            new RunOptions
+            {
+                AppIds = ["valorant"],
+                CachedApps = [new CachedAppInput { AppId = "valorant", Revision = "revision-1" }],
+                MaxConcurrency = 1
+            }, NullProgress.Instance);
+        run.OnAppStarted(new AppDownloadInfo { AppId = "valorant", Name = "Valorant" });
+        run.OnAppCompleted(new AppDownloadInfo
+        {
+            AppId = "valorant",
+            Name = "Valorant",
+            CacheRevision = "revision-1"
+        }, AppDownloadResult.Success);
+        await run.CompleteAsync();
+
+        Assert.That(run.Progress.GetPage(0, 10).Items.Single().CacheRevision, Is.EqualTo("revision-1"));
+    }
+
+    [Test]
+    public async Task MissingManagerCacheRecordForcesDownloadDespiteLocalMarker()
+    {
+        await using var fixture = await ConcurrentPrefillTests.Fixture.StartAsync(4);
+        const string product = "valorant";
+        await File.WriteAllTextAsync(fixture.Marker(product), "valorant.manifest");
+        fixture.Handler.Bodies[product].Release.TrySetResult();
+        var firstId = Guid.NewGuid().ToString();
+        var first = fixture.Identity(firstId);
+        first["protocolVersion"] = "2";
+        first["appIds"] = JsonSerializer.Serialize(new[] { product });
+        first["cachedApps"] = "[]";
+        Assert.That((await fixture.CallAsync("prefill", first, firstId)).GetProperty("success").GetBoolean(), Is.True);
+        Assert.That((await fixture.TerminalAsync(firstId)).GetProperty("items")[0].GetProperty("result").GetString(), Is.EqualTo("success"));
+        Assert.That(fixture.Handler.ContentRequests, Is.EqualTo(1));
+
+        var secondId = Guid.NewGuid().ToString();
+        var second = fixture.Identity(secondId);
+        second["protocolVersion"] = "2";
+        second["appIds"] = JsonSerializer.Serialize(new[] { product });
+        second["cachedApps"] = JsonSerializer.Serialize(new[]
+        {
+            new { appId = product, revision = "valorant.manifest" }
+        });
+        Assert.That((await fixture.CallAsync("prefill", second, secondId)).GetProperty("success").GetBoolean(), Is.True);
+        Assert.That((await fixture.TerminalAsync(secondId)).GetProperty("items")[0].GetProperty("result").GetString(), Is.EqualTo("already_cached"));
+        Assert.That(fixture.Handler.ContentRequests, Is.EqualTo(1));
     }
 }

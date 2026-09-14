@@ -132,41 +132,44 @@ public sealed class RiotPrefillApi : IDisposable
     }
 
     /// <summary>
-    /// Reports cache status by checking the per-product prefill marker files written after a successful
-    /// prefill. A product is considered "up to date" when a prefill marker exists for it. A live CDN
-    /// version comparison is performed by the actual prefill run; this status is network-free.
+    /// Reports cache status by comparing the Manager's stored revision with the current live
+    /// manifest revision for each requested product.
     /// </summary>
-    public Task<CacheStatusResult> CheckCacheStatusAsync(List<string> appIds, CancellationToken cancellationToken = default)
+    public async Task<CacheStatusResult> CheckCacheStatusAsync(List<CachedAppInput> cachedApps, CancellationToken cancellationToken = default)
     {
         ThrowIfNotInitialized();
         ThrowIfDisposed();
 
-        if (appIds.Count == 0)
+        if (cachedApps.Count == 0)
         {
-            return Task.FromResult(new CacheStatusResult
+            return new CacheStatusResult
             {
                 Apps = new List<AppCacheStatus>(),
                 Message = "No app IDs provided"
-            });
+            };
         }
 
         var apps = new List<AppCacheStatus>();
-        foreach (var appId in appIds.Distinct())
+        foreach (var cachedApp in cachedApps
+                     .Where(app => !string.IsNullOrWhiteSpace(app.Revision))
+                     .DistinctBy(app => app.AppId, StringComparer.OrdinalIgnoreCase))
         {
-            var patchline = ResolvePatchline(appId);
+            var patchline = ResolvePatchline(cachedApp.AppId);
+            if (patchline == null) continue;
+            var currentRevision = await GetCurrentRevisionAsync(patchline, cancellationToken);
             apps.Add(new AppCacheStatus
             {
-                AppId = appId,
-                Name = patchline != null ? DisplayNameFor(patchline) : appId,
-                IsUpToDate = HasPrefillMarker(appId)
+                AppId = cachedApp.AppId,
+                Name = DisplayNameFor(patchline),
+                IsUpToDate = StringComparer.Ordinal.Equals(cachedApp.Revision, currentRevision)
             });
         }
 
-        return Task.FromResult(new CacheStatusResult
+        return new CacheStatusResult
         {
             Apps = apps,
             Message = $"Checked {apps.Count} apps"
-        });
+        };
     }
 
     /// <summary>
@@ -248,6 +251,14 @@ public sealed class RiotPrefillApi : IDisposable
         return manifestHandler.BuildDownloadQueue(manifest).Sum(e => e.TotalBytes);
     }
 
+    private async Task<string> GetCurrentRevisionAsync(Patchline patchline, CancellationToken cancellationToken)
+    {
+        using var manifestHandler = new ManifestHandler(_console, _createClient(),
+            _budget, "cache-status", 1, _settings with { SkipDownloads = true }, _replace);
+        var manifestUrl = await manifestHandler.FindPatchlineReleaseAsync(patchline, cancellationToken);
+        return manifestUrl.Split('/').Last();
+    }
+
     /// <summary>
     /// Runs the prefill operation, emitting structured progress events per product.
     /// </summary>
@@ -298,27 +309,39 @@ public sealed class RiotPrefillApi : IDisposable
                 progress.OnAppStarted(app);
                 try
                 {
-                    var outcome = await PrefillPatchlineAsync(patchline, app, ReadPrefillMarker(patchline.Value),
+                    var versionBefore = run == null
+                        ? ReadPrefillMarker(patchline.Value)
+                        : run.Options.CachedApps.FirstOrDefault(cached => string.Equals(
+                            cached.AppId, patchline.Value, StringComparison.OrdinalIgnoreCase))?.Revision;
+                    var outcome = await PrefillPatchlineAsync(patchline, app, versionBefore,
                         force, progress, operationId, maxConcurrency, cancellationToken);
                     totalBytesTransferred += outcome.Bytes;
                     cancellationToken.ThrowIfCancellationRequested();
+                    var completedApp = new AppDownloadInfo
+                    {
+                        AppId = app.AppId,
+                        Name = app.Name,
+                        TotalBytes = app.TotalBytes,
+                        ChunkCount = app.ChunkCount,
+                        CacheRevision = outcome.LiveVersion
+                    };
                     if (outcome.Skipped)
                     {
                         alreadyUpToDate++;
-                        progress.OnAppCompleted(app, AppDownloadResult.AlreadyUpToDate);
+                        progress.OnAppCompleted(completedApp, AppDownloadResult.AlreadyUpToDate);
                     }
                     else if (outcome.Success)
                     {
                         if (!string.IsNullOrWhiteSpace(outcome.LiveVersion))
                         {
-                            if (!await WritePrefillMarkerAsync(app, outcome.LiveVersion, run, cancellationToken)) break;
+                            if (!await WritePrefillMarkerAsync(completedApp, outcome.LiveVersion, run, cancellationToken)) break;
                         }
-                        else if (run != null && !run.OnAppCompleted(app, AppDownloadResult.Success, null))
+                        else if (run != null && !run.OnAppCompleted(completedApp, AppDownloadResult.Success, null))
                         {
                             break;
                         }
                         updated++;
-                        if (run == null) progress.OnAppCompleted(app, AppDownloadResult.Success);
+                        if (run == null) progress.OnAppCompleted(completedApp, AppDownloadResult.Success);
                     }
                     else
                     {

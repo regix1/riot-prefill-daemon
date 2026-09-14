@@ -101,6 +101,7 @@ public class CommandResponse
 
 public class PrefillProgressUpdate
 {
+    public string? CacheRevision { get; set; }
     public string? OperationId { get; init; }
     public string? DaemonInstanceId { get; init; }
     public long Sequence { get; init; }
@@ -183,6 +184,7 @@ public class AppDownloadInfo
     public string Name { get; init; } = string.Empty;
     public long TotalBytes { get; init; }
     public int ChunkCount { get; init; }
+    public string? CacheRevision { get; init; }
 }
 
 public class DownloadProgressInfo
