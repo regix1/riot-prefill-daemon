@@ -120,6 +120,28 @@ public sealed class PrefillRunTests
     }
 
     [Test]
+    public async Task MissingRevisionUsesStoredMarkerForCacheStatus()
+    {
+        await using var fixture = await ConcurrentPrefillTests.Fixture.StartAsync(4);
+        const string current = "valorant";
+        const string missing = "league_of_legends";
+        await File.WriteAllTextAsync(fixture.Marker(current), "valorant.manifest");
+        var response = await fixture.CallAsync("check-cache-status", new Dictionary<string, string>
+        {
+            ["cachedApps"] = JsonSerializer.Serialize(new[]
+            {
+                new { appId = current, revision = (string?)null },
+                new { appId = missing, revision = (string?)null }
+            })
+        });
+
+        Assert.That(response.GetProperty("success").GetBoolean(), Is.True);
+        var app = response.GetProperty("data").GetProperty("apps").EnumerateArray().Single();
+        Assert.That(app.GetProperty("appId").GetString(), Is.EqualTo(current));
+        Assert.That(app.GetProperty("isUpToDate").GetBoolean(), Is.True);
+    }
+
+    [Test]
     public async Task MissingManagerCacheRecordForcesDownloadDespiteLocalMarker()
     {
         await using var fixture = await ConcurrentPrefillTests.Fixture.StartAsync(4);

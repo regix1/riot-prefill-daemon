@@ -151,17 +151,20 @@ public sealed class RiotPrefillApi : IDisposable
 
         var apps = new List<AppCacheStatus>();
         foreach (var cachedApp in cachedApps
-                     .Where(app => !string.IsNullOrWhiteSpace(app.Revision))
                      .DistinctBy(app => app.AppId, StringComparer.OrdinalIgnoreCase))
         {
             var patchline = ResolvePatchline(cachedApp.AppId);
             if (patchline == null) continue;
             var currentRevision = await GetCurrentRevisionAsync(patchline, cancellationToken);
+            var storedRevision = string.IsNullOrWhiteSpace(cachedApp.Revision)
+                ? ReadPrefillMarker(cachedApp.AppId)
+                : cachedApp.Revision;
+            if (string.IsNullOrWhiteSpace(storedRevision)) continue;
             apps.Add(new AppCacheStatus
             {
                 AppId = cachedApp.AppId,
                 Name = DisplayNameFor(patchline),
-                IsUpToDate = StringComparer.Ordinal.Equals(cachedApp.Revision, currentRevision)
+                IsUpToDate = StringComparer.Ordinal.Equals(storedRevision, currentRevision)
             });
         }
 
