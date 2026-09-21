@@ -7,6 +7,7 @@ using RiotPrefill.Settings;
 using ByteSizeLib;
 using Spectre.Console;
 using System.Diagnostics;
+using System.Diagnostics.CodeAnalysis;
 
 namespace RiotPrefill.Api;
 
@@ -23,6 +24,7 @@ namespace RiotPrefill.Api;
 /// </summary>
 public sealed class RiotPrefillApi : IDisposable
 {
+    private static readonly TimeSpan CacheStatusResponseReserve = TimeSpan.FromSeconds(2);
     private readonly IPrefillProgress _progress;
     private readonly IAnsiConsole _console;
 
@@ -39,17 +41,19 @@ public sealed class RiotPrefillApi : IDisposable
     private readonly string? _lancacheAddress;
     private readonly DownloadSettings _settings;
     private readonly Action<string, string>? _replace;
+    private readonly TimeProvider _clock;
 
     public bool IsPrefilling => Volatile.Read(ref _isPrefilling) != 0;
 
-    public RiotPrefillApi(IPrefillProgress? progress = null)
-        : this(progress, PrefillProtocol.FromEnvironment(20), () => new HttpClient(), AppConfig.CacheDir, null)
+    public RiotPrefillApi(IPrefillProgress? progress = null, TimeProvider? clock = null)
+        : this(progress, PrefillProtocol.FromEnvironment(20), () => new HttpClient(), AppConfig.CacheDir, null,
+            null, clock)
     {
     }
 
     internal RiotPrefillApi(IPrefillProgress? progress, PrefillProtocol protocol,
         Func<HttpClient> createClient, string cacheDirectory, string? lancacheAddress,
-        Action<string, string>? replace = null)
+        Action<string, string>? replace = null, TimeProvider? clock = null)
     {
         _progress = progress ?? NullProgress.Instance;
         _console = new ApiConsoleAdapter(_progress);
@@ -58,6 +62,7 @@ public sealed class RiotPrefillApi : IDisposable
         _lancacheAddress = lancacheAddress;
         _settings = new DownloadSettings(false, true, AppConfig.NoLocalCache, cacheDirectory);
         _replace = replace;
+        _clock = clock ?? TimeProvider.System;
         Directory.CreateDirectory(cacheDirectory);
     }
 
@@ -135,43 +140,174 @@ public sealed class RiotPrefillApi : IDisposable
     /// Reports cache status by comparing the Manager's stored revision with the current live
     /// manifest revision for each requested product.
     /// </summary>
-    public async Task<CacheStatusResult> CheckCacheStatusAsync(List<CachedAppInput> cachedApps, CancellationToken cancellationToken = default)
+    [SuppressMessage("Design", "CA1068:CancellationToken parameters must come last",
+        Justification = "Optional cache-status fields follow the existing cancellation parameter to preserve callers.")]
+    public async Task<CacheStatusResult> CheckCacheStatusAsync(
+        List<CachedAppInput> cachedApps,
+        CancellationToken cancellationToken = default,
+        DateTimeOffset? expiresAtUtc = null,
+        int? cacheStatusVersion = null)
     {
         ThrowIfNotInitialized();
         ThrowIfDisposed();
+        cancellationToken.ThrowIfCancellationRequested();
+
+        if (cacheStatusVersion is not null and not 2)
+            throw new ArgumentException("cacheStatusVersion must be 2.", nameof(cacheStatusVersion));
+
+        var useV2 = cacheStatusVersion == 2;
+        if (useV2)
+        {
+            if (!expiresAtUtc.HasValue)
+                throw new ArgumentException("expiresAtUtc is required for cache status version 2.", nameof(expiresAtUtc));
+            if (cachedApps.Any(app => app is null || string.IsNullOrWhiteSpace(app.AppId)))
+                throw new ArgumentException("cachedApps must contain nonempty appId values.", nameof(cachedApps));
+            if (cachedApps.Select(app => app.AppId).Distinct(StringComparer.OrdinalIgnoreCase).Count() != cachedApps.Count)
+                throw new ArgumentException("cachedApps must contain unique appId values.", nameof(cachedApps));
+        }
 
         if (cachedApps.Count == 0)
         {
             return new CacheStatusResult
             {
+                Version = useV2 ? 2 : null,
                 Apps = new List<AppCacheStatus>(),
-                Message = "No app IDs provided"
+                Message = useV2 ? null : "No app IDs provided"
             };
         }
 
+        var requestedApps = useV2
+            ? cachedApps
+            : cachedApps.DistinctBy(app => app.AppId, StringComparer.OrdinalIgnoreCase).ToList();
         var apps = new List<AppCacheStatus>();
-        foreach (var cachedApp in cachedApps
-                     .DistinctBy(app => app.AppId, StringComparer.OrdinalIgnoreCase))
+
+        if (DeadlineReached(expiresAtUtc))
         {
-            var patchline = ResolvePatchline(cachedApp.AppId);
-            if (patchline == null) continue;
-            var currentRevision = await GetCurrentRevisionAsync(patchline, cancellationToken);
-            var storedRevision = string.IsNullOrWhiteSpace(cachedApp.Revision)
-                ? ReadPrefillMarker(cachedApp.AppId)
-                : cachedApp.Revision;
-            if (string.IsNullOrWhiteSpace(storedRevision)) continue;
-            apps.Add(new AppCacheStatus
+            if (useV2) AddDeadlineRows(apps, requestedApps, 0);
+            return new CacheStatusResult
             {
-                AppId = cachedApp.AppId,
-                Name = DisplayNameFor(patchline),
-                IsUpToDate = StringComparer.Ordinal.Equals(storedRevision, currentRevision)
-            });
+                Version = useV2 ? 2 : null,
+                Apps = apps,
+                Message = useV2 ? null : $"Checked {apps.Count} apps"
+            };
         }
 
-        return new CacheStatusResult
+        CancellationTokenSource? deadline = null;
+        CancellationTokenSource? inspection = null;
+        try
         {
-            Apps = apps,
-            Message = $"Checked {apps.Count} apps"
+            var inspectionToken = cancellationToken;
+            if (expiresAtUtc.HasValue)
+            {
+                var remaining = expiresAtUtc.Value - CacheStatusResponseReserve - _clock.GetUtcNow();
+                var inspectionTime = remaining <= TimeSpan.Zero ? TimeSpan.Zero : remaining;
+                deadline = new CancellationTokenSource(inspectionTime, _clock);
+                inspection = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, deadline.Token);
+                inspectionToken = inspection.Token;
+            }
+
+            for (var index = 0; index < requestedApps.Count; index++)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                if (DeadlineReached(expiresAtUtc))
+                {
+                    if (useV2) AddDeadlineRows(apps, requestedApps, index);
+                    break;
+                }
+
+                var cachedApp = requestedApps[index];
+                var patchline = ResolvePatchline(cachedApp.AppId);
+                if (patchline == null)
+                {
+                    if (useV2) apps.Add(CreateUnknown(cachedApp, CacheReason.MissingApp));
+                    continue;
+                }
+
+                try
+                {
+                    var storedRevision = string.IsNullOrWhiteSpace(cachedApp.Revision)
+                        ? ReadPrefillMarker(cachedApp.AppId)
+                        : cachedApp.Revision;
+                    if (string.IsNullOrWhiteSpace(storedRevision))
+                    {
+                        if (useV2) apps.Add(CreateUnknown(cachedApp, CacheReason.NoCacheEvidence));
+                        continue;
+                    }
+
+                    var currentRevision = await GetCurrentRevisionAsync(patchline, inspectionToken);
+                    cancellationToken.ThrowIfCancellationRequested();
+                    if (DeadlineReached(expiresAtUtc))
+                    {
+                        if (useV2) AddDeadlineRows(apps, requestedApps, index);
+                        break;
+                    }
+
+                    if (string.IsNullOrWhiteSpace(currentRevision))
+                    {
+                        if (useV2) apps.Add(CreateUnknown(cachedApp, CacheReason.ManifestUnavailable));
+                        continue;
+                    }
+
+                    var isUpToDate = StringComparer.Ordinal.Equals(storedRevision, currentRevision);
+                    apps.Add(new AppCacheStatus
+                    {
+                        AppId = cachedApp.AppId,
+                        Name = DisplayNameFor(patchline),
+                        IsUpToDate = isUpToDate,
+                        Outcome = useV2 ? isUpToDate ? CacheOutcome.Current : CacheOutcome.Outdated : null
+                    });
+                }
+                catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested && inspectionToken.IsCancellationRequested)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    if (useV2) AddDeadlineRows(apps, requestedApps, index);
+                    break;
+                }
+                catch (Exception)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    if (DeadlineReached(expiresAtUtc))
+                    {
+                        if (useV2) AddDeadlineRows(apps, requestedApps, index);
+                        break;
+                    }
+                    if (useV2) apps.Add(CreateUnknown(cachedApp, CacheReason.InspectionFailed));
+                }
+            }
+
+            return new CacheStatusResult
+            {
+                Version = useV2 ? 2 : null,
+                Apps = apps,
+                Message = useV2 ? null : $"Checked {apps.Count} apps"
+            };
+        }
+        finally
+        {
+            inspection?.Dispose();
+            deadline?.Dispose();
+        }
+    }
+
+    private bool DeadlineReached(DateTimeOffset? expiresAtUtc)
+        => expiresAtUtc.HasValue && expiresAtUtc.Value - _clock.GetUtcNow() <= CacheStatusResponseReserve;
+
+    private static void AddDeadlineRows(List<AppCacheStatus> apps, IReadOnlyList<CachedAppInput> requestedApps, int startIndex)
+    {
+        for (var index = startIndex; index < requestedApps.Count; index++)
+            apps.Add(CreateUnknown(requestedApps[index], CacheReason.DeadlineReached));
+    }
+
+    private static AppCacheStatus CreateUnknown(CachedAppInput cachedApp, CacheReason reason)
+    {
+        var patchline = ResolvePatchline(cachedApp.AppId);
+        return new AppCacheStatus
+        {
+            AppId = cachedApp.AppId,
+            Name = patchline == null ? cachedApp.AppId : DisplayNameFor(patchline),
+            IsUpToDate = false,
+            Outcome = CacheOutcome.Unknown,
+            Reason = reason
         };
     }
 
@@ -259,6 +395,7 @@ public sealed class RiotPrefillApi : IDisposable
         using var manifestHandler = new ManifestHandler(_console, _createClient(),
             _budget, "cache-status", 1, _settings with { SkipDownloads = true }, _replace);
         var manifestUrl = await manifestHandler.FindPatchlineReleaseAsync(patchline, cancellationToken);
+        if (string.IsNullOrWhiteSpace(manifestUrl)) return string.Empty;
         return manifestUrl.Split('/').Last();
     }
 

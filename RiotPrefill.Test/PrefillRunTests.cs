@@ -48,7 +48,9 @@ public sealed class PrefillRunTests
         Assert.That(status.GetProperty("protocolVersion").GetInt32(), Is.EqualTo(2));
         Assert.That(status.GetProperty("maxConcurrentRuns").GetInt32(), Is.EqualTo(4));
         Assert.That(status.GetProperty("maxConcurrentRequests").GetInt32(), Is.EqualTo(20));
-        Assert.That(status.GetProperty("features").GetArrayLength(), Is.EqualTo(5));
+        var features = status.GetProperty("features");
+        Assert.That(features.GetArrayLength(), Is.EqualTo(6));
+        Assert.That(features.EnumerateArray().Select(feature => feature.GetString()), Does.Contain("cacheStatusV2"));
         var empty = await fixture.StartRunAsync(Guid.NewGuid().ToString());
         Assert.That(empty.GetProperty("success").GetBoolean(), Is.False);
         var missing = await fixture.CallAsync("get-operation", fixture.Identity(Guid.NewGuid().ToString()));
