@@ -65,16 +65,13 @@ public sealed class PrefillRunTests
     }
 
     [Test]
-    public async Task LegacyStart_IsExclusive_AndBlocksThreeBodyBarrier()
+    public async Task APrefillWithoutProtocolVersionIsRefusedAsOutdated()
     {
         await using var fixture = await ConcurrentPrefillTests.Fixture.StartAsync(4);
-        var legacy = await fixture.CallAsync("prefill", new() { ["products"] = "[\"league_of_legends\"]" });
-        Assert.That(legacy.GetProperty("success").GetBoolean(), Is.True);
-        await fixture.Handler.Bodies["league_of_legends"].Entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
-        var next = await fixture.StartRunAsync(Guid.NewGuid().ToString(), "valorant");
-        Assert.That(next.GetProperty("success").GetBoolean(), Is.False);
-        Assert.That(fixture.Handler.ActiveBodies, Is.EqualTo(1));
-        Assert.That(fixture.Handler.Bodies["valorant"].Entered.Task.IsCompleted, Is.False);
+        var response = await fixture.CallAsync("prefill", new() { ["products"] = "[\"league_of_legends\"]" });
+        Assert.That(response.GetProperty("success").GetBoolean(), Is.False);
+        Assert.That(response.GetProperty("errorCode").GetString(), Is.EqualTo("daemon-outdated"));
+        Assert.That(fixture.Handler.ContentRequests, Is.Zero);
     }
 
     [Test]

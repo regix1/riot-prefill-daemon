@@ -33,7 +33,7 @@ public sealed class CacheCommitTests
         await api.InitializeAsync();
         var run = new PrefillRun(Guid.NewGuid().ToString(), protocol,
             new RunOptions { AppIds = new[] { "valorant" }, MaxConcurrency = 2 }, NullProgress.Instance);
-        var operation = api.PrefillAsync(new PrefillOptions(), run, CancellationToken.None);
+        var operation = api.PrefillAsync(run, CancellationToken.None);
         try
         {
             await handler.Bodies["valorant"].Entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
@@ -69,7 +69,7 @@ public sealed class CacheCommitTests
         await api.InitializeAsync();
         var run = new PrefillRun(Guid.NewGuid().ToString(), protocol,
             new RunOptions { AppIds = new[] { "league_of_legends", "valorant" }, MaxConcurrency = 2 }, NullProgress.Instance);
-        var operation = api.PrefillAsync(new PrefillOptions(), run, CancellationToken.None);
+        var operation = api.PrefillAsync(run, CancellationToken.None);
         try
         {
             await handler.Bodies["league_of_legends"].Entered.Task.WaitAsync(TimeSpan.FromSeconds(5));

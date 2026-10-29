@@ -2,18 +2,6 @@
 
 namespace RiotPrefill.Api;
 
-public class PrefillOptions
-{
-    public bool DownloadAllOwnedGames { get; set; }
-    public bool Force { get; set; }
-
-    /// <summary>
-    /// Optional explicit list of patchline slugs to prefill. When empty, falls back to the selected
-    /// apps (or the full catalog when <see cref="DownloadAllOwnedGames"/> is set).
-    /// </summary>
-    public List<string>? Products { get; set; }
-}
-
 public class PrefillResult
 {
     public bool Success { get; init; }

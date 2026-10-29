@@ -402,21 +402,15 @@ public sealed class RiotPrefillApi : IDisposable
     /// <summary>
     /// Runs the prefill operation, emitting structured progress events per product.
     /// </summary>
-    public Task<PrefillResult> PrefillAsync(PrefillOptions? options = null, CancellationToken cancellationToken = default)
-        => PrefillAsync(options ?? new PrefillOptions(), null, cancellationToken);
-
-    internal async Task<PrefillResult> PrefillAsync(PrefillOptions options, PrefillRun? run,
-        CancellationToken cancellationToken)
+    internal async Task<PrefillResult> PrefillAsync(PrefillRun? run, CancellationToken cancellationToken)
     {
         ThrowIfNotInitialized();
         ThrowIfDisposed();
         var progress = (IPrefillProgress?)run ?? _progress;
-        var force = run?.Options.Force ?? options.Force;
+        var force = run?.Options.Force ?? false;
         var operationId = run?.Progress.Snapshot.OperationId ?? "legacy";
         var maxConcurrency = run?.Options.MaxConcurrency ?? _budget.MaxConcurrentRequests;
-        var selected = run?.Options.AppIds ?? (options.Products is { Count: > 0 }
-            ? options.Products.ToArray() : options.DownloadAllOwnedGames
-                ? AllPatchlines.Select(p => p.Value).ToArray() : GetSelectedApps().ToArray());
+        var selected = run?.Options.AppIds ?? GetSelectedApps().ToArray();
         if (run?.Options.Selection == "all") selected = AllPatchlines.Select(p => p.Value).ToArray();
         var products = selected.Select(id => ResolvePatchline(id)
             ?? throw new ArgumentException($"Unknown Riot patchline: {id}")).Distinct().ToArray();

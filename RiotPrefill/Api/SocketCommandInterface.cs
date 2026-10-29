@@ -23,7 +23,6 @@ public sealed class SocketCommandInterface : IDisposable
     private readonly OwnedOperationCoordinator _prefillOperation;
     private readonly PrefillProtocol _protocol;
     private readonly RiotPrefillApi _api;
-    private readonly Func<PrefillOptions, CancellationToken, Task<PrefillResult>> _prefillAsync;
     private bool _disposed;
 
     public SocketCommandInterface(string socketPath, TimeProvider? clock = null)
@@ -34,7 +33,6 @@ public sealed class SocketCommandInterface : IDisposable
         _prefillOperation = new OwnedOperationCoordinator(_protocol.MaxConcurrentRuns);
         _api = new RiotPrefillApi(_progress, _protocol, () => new HttpClient(), AppConfig.CacheDir, null,
             clock: clock);
-        _prefillAsync = _api.PrefillAsync;
         _socketServer.OnCommand = HandleCommandAsync;
 
         _progress.SocketServer = _socketServer;
@@ -56,17 +54,8 @@ public sealed class SocketCommandInterface : IDisposable
         _socketServer = new SocketServer(tcpPort, _progress);
         _api = new RiotPrefillApi(_progress, protocol, createClient, cacheDirectory, lancacheAddress, replace,
             clock);
-        _prefillAsync = _api.PrefillAsync;
         _socketServer.OnCommand = HandleCommandAsync;
         _progress.SocketServer = _socketServer;
-    }
-
-    internal SocketCommandInterface(
-        int tcpPort,
-        Func<PrefillOptions, CancellationToken, Task<PrefillResult>> prefillAsync)
-        : this(tcpPort)
-    {
-        _prefillAsync = prefillAsync ?? throw new ArgumentNullException(nameof(prefillAsync));
     }
 
     internal int BoundTcpPort => _socketServer.BoundTcpPort;
@@ -315,81 +304,9 @@ public sealed class SocketCommandInterface : IDisposable
         CommandRequest request,
         CancellationToken cancellationToken)
     {
-        if (request.Parameters?.GetValueOrDefault("protocolVersion") == "2")
-            return await StartRunAsync(request, cancellationToken);
-        if (request.Parameters?.ContainsKey("protocolVersion") == true)
-            return Reject(request, "unsupported-protocol");
-
-        if (_prefillOperation.IsRunning || _api.IsPrefilling)
-        {
-            return new CommandResponse
-            {
-                Id = request.Id,
-                Success = false,
-                Error = "A prefill is already in progress",
-                CompletedAt = DateTime.UtcNow
-            };
-        }
-
-        var options = new PrefillOptions();
-
-        if (request.Parameters != null)
-        {
-            if (bool.TryParse(request.Parameters.GetValueOrDefault("all"), out var all))
-                options.DownloadAllOwnedGames = all;
-            if (bool.TryParse(request.Parameters.GetValueOrDefault("force"), out var force))
-                options.Force = force;
-
-            var productsJson = request.Parameters.GetValueOrDefault("products");
-            if (!string.IsNullOrEmpty(productsJson))
-            {
-                options.Products = JsonSerializer.Deserialize(productsJson, DaemonSerializationContext.Default.ListString);
-            }
-        }
-
-        cancellationToken.ThrowIfCancellationRequested();
-        try
-        {
-            await _prefillOperation.StartAsync(async operationToken =>
-            {
-                try
-                {
-                    var result = await _prefillAsync(options, operationToken);
-
-                    if (result.Success)
-                        _progress.OnLog(LogLevel.Info, "Prefill completed successfully");
-                    else
-                        _progress.OnLog(LogLevel.Warning, $"Prefill completed with errors: {result.ErrorMessage}");
-                }
-                catch (OperationCanceledException) when (operationToken.IsCancellationRequested)
-                {
-                    _progress.OnPrefillCancelled("Prefill cancelled by user");
-                }
-                catch (Exception ex)
-                {
-                    _progress.OnError($"Prefill failed: {ex.Message}", ex);
-                    throw;
-                }
-            }, _cts.Token);
-        }
-        catch (InvalidOperationException)
-        {
-            return new CommandResponse
-            {
-                Id = request.Id,
-                Success = false,
-                Error = "A prefill is already in progress",
-                CompletedAt = DateTime.UtcNow
-            };
-        }
-
-        return new CommandResponse
-        {
-            Id = request.Id,
-            Success = true,
-            Message = "Prefill started",
-            CompletedAt = DateTime.UtcNow
-        };
+        if (request.Parameters?.GetValueOrDefault("protocolVersion") != "2")
+            return Reject(request, "daemon-outdated");
+        return await StartRunAsync(request, cancellationToken);
     }
 
     private async Task<CommandResponse> StartRunAsync(CommandRequest request, CancellationToken cancellationToken)
@@ -431,7 +348,7 @@ public sealed class SocketCommandInterface : IDisposable
             {
                 try
                 {
-                    var result = await _api.PrefillAsync(new PrefillOptions(), run, token);
+                    var result = await _api.PrefillAsync(run, token);
                     if (!result.Success) run.Progress.TryChooseTerminal("failed", "prefill-failed");
                 }
                 catch (OperationCanceledException) when (token.IsCancellationRequested)
@@ -454,7 +371,7 @@ public sealed class SocketCommandInterface : IDisposable
                 Data = new PrefillStart(true, request.Id, _protocol.DaemonInstanceId,
                     admission.Replayed ? admission.Operation!.State : "started")
             }
-            : Reject(request, admission.Error ?? "prefill-rejected");
+            : Reject(request, admission.Error!);
     }
 
     private CommandResponse HandleGetOperation(CommandRequest request)
@@ -756,18 +673,6 @@ public sealed class SocketCommandInterface : IDisposable
                 FailedApps = summary.FailedApps,
                 TotalBytesTransferred = _bytes.Values.Sum(),
                 TotalTime = summary.TotalTime,
-                UpdatedAt = DateTime.UtcNow
-            });
-        }
-
-        public void OnPrefillCancelled(string message)
-        {
-            OnLog(LogLevel.Info, message);
-            BroadcastProgress(new PrefillProgressUpdate
-            {
-                State = "cancelled",
-                TotalBytesTransferred = _bytes.Values.Sum(),
-                ErrorMessage = message,
                 UpdatedAt = DateTime.UtcNow
             });
         }
