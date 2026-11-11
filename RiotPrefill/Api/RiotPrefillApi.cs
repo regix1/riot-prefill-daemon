@@ -548,7 +548,8 @@ public sealed class RiotPrefillApi : IDisposable
     {
         Patchline.LeagueOfLegends,
         Patchline.Valorant,
-        Patchline.LegendsOfRuneterra
+        Patchline.LegendsOfRuneterra,
+        Patchline.TeamfightTactics
     };
 
     private static string DisplayNameFor(Patchline patchline)
@@ -556,6 +557,8 @@ public sealed class RiotPrefillApi : IDisposable
         if (patchline == Patchline.LeagueOfLegends) return "League of Legends";
         if (patchline == Patchline.Valorant) return "Valorant";
         if (patchline == Patchline.LegendsOfRuneterra) return "Legends of Runeterra";
+        // The manager's Riot host map names this game with the same text; its cache match compares them exactly.
+        if (patchline == Patchline.TeamfightTactics) return "Teamfight Tactics";
         return patchline.Value;
     }
 

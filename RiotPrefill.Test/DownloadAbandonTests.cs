@@ -88,10 +88,10 @@ public sealed class DownloadAbandonTests
     }
 
     [Test]
-    public void ManifestHandler_ClientTimeout_RaisesTaskCanceledWithNothingCancelled()
+    public void ManifestHandler_ClientTimeout_RaisesTaskCanceledWithNothingCanceled()
     {
         // The premise the catch filters rest on. HttpClient's own request timeout arrives as a
-        // TaskCanceledException even though the caller's token was never cancelled, so a catch on
+        // TaskCanceledException even though the caller's token was never canceled, so a catch on
         // OperationCanceledException without a token check cannot tell a dead endpoint from a user cancel.
         using var handler = new ThrowingHandler(null);
         using var httpClient = new HttpClient(handler) { Timeout = TimeSpan.FromMilliseconds(200) };

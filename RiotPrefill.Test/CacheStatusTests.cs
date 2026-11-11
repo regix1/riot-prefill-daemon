@@ -218,7 +218,7 @@ public sealed class CacheStatusTests
             Assert.That(result.Apps[0].Reason, Is.Null);
             Assert.That(result.Apps[1].Reason, Is.EqualTo(CacheReason.DeadlineReached));
             Assert.That(result.Apps[2].Reason, Is.EqualTo(CacheReason.DeadlineReached));
-            Assert.That(heldBody.ReadCancelled.Task.IsCompleted, Is.True);
+            Assert.That(heldBody.ReadCanceled.Task.IsCompleted, Is.True);
             Assert.That(heldBody.Disposed.Task.IsCompleted, Is.True);
         });
     }
@@ -253,7 +253,7 @@ public sealed class CacheStatusTests
             Assert.That(result.Apps[0].AppId, Is.EqualTo("league_of_legends"));
             Assert.That(result.Apps[0].Outcome, Is.Null);
             Assert.That(result.Apps[0].Reason, Is.Null);
-            Assert.That(heldBody.ReadCancelled.Task.IsCompleted, Is.True);
+            Assert.That(heldBody.ReadCanceled.Task.IsCompleted, Is.True);
         });
     }
 
@@ -283,7 +283,7 @@ public sealed class CacheStatusTests
         clock.Advance(TimeSpan.FromSeconds(8));
 
         Assert.ThrowsAsync<OperationCanceledException>(async () => await check);
-        Assert.That(heldBody.ReadCancelled.Task.IsCompleted, Is.True);
+        Assert.That(heldBody.ReadCanceled.Task.IsCompleted, Is.True);
     }
 
     [Test]
@@ -413,7 +413,7 @@ public sealed class CacheStatusTests
             Assert.That(result.GetProperty("apps")[0].GetProperty("reason").GetString(),
                 Is.EqualTo("DeadlineReached"));
             Assert.That(result.TryGetProperty("message", out _), Is.False);
-            Assert.That(heldBody.ReadCancelled.Task.IsCompleted, Is.True);
+            Assert.That(heldBody.ReadCanceled.Task.IsCompleted, Is.True);
         });
 
         await SendRequestAsync(stream, new CommandRequest { Id = "status", Type = "status" });
@@ -557,7 +557,7 @@ public sealed class CacheStatusTests
     private sealed class HeldStream : Stream
     {
         internal TaskCompletionSource Started { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        internal TaskCompletionSource ReadCancelled { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        internal TaskCompletionSource ReadCanceled { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal TaskCompletionSource Disposed { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
         public override bool CanRead => true;
@@ -598,7 +598,7 @@ public sealed class CacheStatusTests
             }
             catch (OperationCanceledException)
             {
-                ReadCancelled.TrySetResult();
+                ReadCanceled.TrySetResult();
                 throw;
             }
         }

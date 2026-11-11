@@ -9,11 +9,8 @@
     public sealed class ReleaseInfo
     {
         // Utility properties to make working with this response easier
-        public string ArtifactTypeId => _Release.ArtifactTypeId;
         public string DownloadUrl => _DownloadInfo.url;
         public Version Version => _Release.Version;
-        public string Platform => string.Join(",", _Release.labels.platform.values);
-        public string RiotPlatform => string.Join(",", _Release.labels.riotplatform.values);
 
 
 
@@ -27,11 +24,6 @@
 
         [JsonPropertyName("download")]
         public DownloadInfo _DownloadInfo { get; set; }
-
-        public override string ToString()
-        {
-            return $"{ArtifactTypeId} - {Version}";
-        }
     }
 
     public sealed class Release
@@ -40,8 +32,6 @@
         public string id { get; set; }
         public Labels labels { get; set; }
 
-        public string ArtifactTypeId => labels.riotartifact_type_id.values.First();
-
         private Version _version;
         public Version Version
         {
@@ -49,9 +39,12 @@
             {
                 if (_version == null)
                 {
+                    // League ids read "16.22.8348910+branch", Teamfight Tactics ids read
+                    // "rls-18.6.0.5895859.Set18FullPC.Shipping.live"; both start with the numeric version.
                     var artifactVersionIdAsString = labels.riotartifact_version_id.values.First();
                     var split = artifactVersionIdAsString.Split("+");
-                    _version = Version.Parse(split[0]);
+                    var numbered = split[0].StartsWith("rls-") ? split[0]["rls-".Length..] : split[0];
+                    _version = Version.Parse(string.Join('.', numbered.Split('.').Take(4)));
                 }
                 return _version;
             }

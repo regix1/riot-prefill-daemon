@@ -100,7 +100,7 @@ internal sealed class PrefillRun : IPrefillProgress
     internal static PrefillProgressUpdate ToUpdate(RunSnapshot snapshot)
     {
         var item = snapshot.CurrentItem;
-        var terminal = snapshot.State is "completed" or "failed" or "cancelled" or "cancelling";
+        var terminal = snapshot.State is "completed" or "failed" or "canceled" or "canceling";
         return new PrefillProgressUpdate
         {
             OperationId = snapshot.OperationId,
@@ -126,7 +126,7 @@ internal sealed class PrefillRun : IPrefillProgress
             AlreadyUpToDate = snapshot.CachedApps,
             FailedApps = snapshot.FailedApps,
             SkippedApps = snapshot.SkippedApps,
-            CancelledApps = snapshot.CancelledApps,
+            CanceledApps = snapshot.CanceledApps,
             TotalTime = snapshot.UpdatedAt - snapshot.StartedAt
         };
     }

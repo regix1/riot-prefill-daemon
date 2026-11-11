@@ -21,14 +21,7 @@ namespace RiotPrefill.CliCommands
             await DownloadPatchlineAsync(Patchline.LeagueOfLegends);
             await DownloadPatchlineAsync(Patchline.Valorant);
             await DownloadPatchlineAsync(Patchline.LegendsOfRuneterra);
-
-            // Standalone
-            //var releaseInfo = await manifestHandler.FindLatestProductReleaseAsync(ArtifactType.LolStandaloneClientContent);
-
-            //LolGameClient
-            //var releaseInfo = await manifestHandler.FindLatestProductReleaseAsync(ArtifactType.LolGameClient);
-            //var manifestPathOnDisk = await manifestHandler.DownloadManifestAsync(releaseInfo);
-
+            await DownloadPatchlineAsync(Patchline.TeamfightTactics);
         }
 
         private async Task DownloadPatchlineAsync(Patchline currentPatchline)

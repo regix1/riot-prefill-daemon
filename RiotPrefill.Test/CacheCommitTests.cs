@@ -37,15 +37,15 @@ public sealed class CacheCommitTests
         try
         {
             await handler.Bodies["valorant"].Entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
-            Assert.That(run.Progress.TryChooseTerminal("cancelled"), Is.True);
+            Assert.That(run.Progress.TryChooseTerminal("canceled"), Is.True);
             handler.ReleaseAll();
             await operation.WaitAsync(TimeSpan.FromSeconds(5));
             await run.CompleteAsync();
             Assert.That(replacements, Is.Zero);
             Assert.That(await File.ReadAllTextAsync(marker), Is.EqualTo("previous.manifest"));
-            Assert.That(run.Progress.Snapshot.State, Is.EqualTo("cancelled"));
+            Assert.That(run.Progress.Snapshot.State, Is.EqualTo("canceled"));
             Assert.That(run.Progress.Snapshot.CompletedApps, Is.Zero);
-            Assert.That(run.Progress.GetPage().Items[0].Result, Is.EqualTo("cancelled"));
+            Assert.That(run.Progress.GetPage().Items[0].Result, Is.EqualTo("canceled"));
             Assert.That(run.Progress.Snapshot.BytesTransferred, Is.EqualTo(8));
             Assert.That(Directory.GetFiles(directory, "*.tmp"), Is.Empty);
         }
@@ -79,15 +79,15 @@ public sealed class CacheCommitTests
             Assert.That(committed.Result, Is.EqualTo("success"));
             Assert.That(await File.ReadAllTextAsync(Path.Combine(directory, "prefilledVersion-league_of_legends.txt")),
                 Is.EqualTo("league_of_legends.manifest"));
-            Assert.That(run.Progress.TryChooseTerminal("cancelled"), Is.True);
+            Assert.That(run.Progress.TryChooseTerminal("canceled"), Is.True);
             handler.ReleaseAll();
             await operation.WaitAsync(TimeSpan.FromSeconds(5));
             await run.CompleteAsync();
             var page = run.Progress.GetPage();
             Assert.That(page.Items[0].Result, Is.EqualTo("success"));
-            Assert.That(page.Items[1].Result, Is.EqualTo("cancelled"));
+            Assert.That(page.Items[1].Result, Is.EqualTo("canceled"));
             Assert.That(page.Operation.CompletedApps, Is.EqualTo(1));
-            Assert.That(page.Operation.CancelledApps, Is.EqualTo(1));
+            Assert.That(page.Operation.CanceledApps, Is.EqualTo(1));
             Assert.That(page.Operation.BytesTransferred, Is.EqualTo(16));
             Assert.That(File.Exists(Path.Combine(directory, "prefilledVersion-valorant.txt")), Is.False);
             Assert.That(Directory.GetFiles(directory, "*.tmp"), Is.Empty);

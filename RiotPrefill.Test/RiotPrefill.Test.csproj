@@ -21,6 +21,11 @@
     </ItemGroup>
 
     <ItemGroup>
+        <!-- Responses recorded from Riot's public config, sieve and CDN services -->
+        <None Include="TestData\**" CopyToOutputDirectory="PreserveNewest" />
+    </ItemGroup>
+
+    <ItemGroup>
         <!-- Spectre.Console from NuGet, matching the version that LancachePrefill.Common references transitively -->
         <PackageReference Include="Spectre.Console" Version="0.51.1" />
         <PackageReference Include="Spectre.Console.Testing" Version="0.51.1" />

@@ -9,7 +9,7 @@ Riot Games prefill daemon for [LANCache](https://lancache.net/) — a companion 
 [**LANCache Manager**](https://github.com/regix1/lancache-manager), which
 coordinates the prefill providers.
 
-It downloads Riot Games content (League of Legends and Valorant) through your
+It downloads Riot Games content (League of Legends, Teamfight Tactics and Valorant) through your
 lancache *before* you install, so the real install — and every other machine on
 your LAN — pulls from the cache at full LAN speed instead of the internet.
 Nothing is written to disk: bytes stream through the cache and are discarded.
@@ -47,7 +47,7 @@ No login required — content is public, so you can prefill straight away.
 ## How it works
 
 1. **No login needed** — Riot's content is publicly fetchable; there is nothing to authenticate.
-2. **Select titles** — choose from League of Legends and Valorant.
+2. **Select titles** — choose from League of Legends, Teamfight Tactics and Valorant.
 3. **Resolve** — release metadata, manifests, and CDN URLs are looked up from Riot's content system.
 4. **Prefill** — each title's content is fetched through the lancache and discarded, warming the cache.
 

@@ -7,5 +7,6 @@
         public static readonly Patchline LeagueOfLegends = new Patchline("league_of_legends");
         public static readonly Patchline Valorant = new Patchline("valorant");
         public static readonly Patchline LegendsOfRuneterra = new Patchline("bacon");
+        public static readonly Patchline TeamfightTactics = new Patchline("teamfighttactics");
     }
 }

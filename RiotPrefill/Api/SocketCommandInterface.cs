@@ -137,62 +137,16 @@ public sealed class SocketCommandInterface : IDisposable
         }
     }
 
-    private async Task<CommandResponse> HandleCancelPrefillAsync(
+    private Task<CommandResponse> HandleCancelPrefillAsync(
         CommandRequest request,
         CancellationToken cancellationToken)
     {
-        if (request.Parameters?.TryGetValue("operationId", out var operationId) == true)
-        {
-            _protocol.ValidateInstance(request.Parameters.GetValueOrDefault("daemonInstanceId") ?? "");
-            var operation = _prefillOperation.Cancel(operationId, _protocol.DaemonInstanceId);
-            return operation == null ? Reject(request, "operation-not-found") :
-                new CommandResponse { Id = request.Id, Success = true, Data = operation };
-        }
-        if (_prefillOperation.GetActiveOperations().Count > 1)
-            return Reject(request, "ambiguous-operation");
-
-        if (!_prefillOperation.IsRunning)
-        {
-            return new CommandResponse
-            {
-                Id = request.Id,
-                Success = true,
-                Message = "No prefill in progress",
-                CompletedAt = DateTime.UtcNow
-            };
-        }
-
-        _progress.OnLog(LogLevel.Info, "Cancelling prefill...");
-        var result = await _prefillOperation.CancelAndWaitAsync(cancellationToken);
-        if (result.Status == OwnedOperationStatus.Failed)
-        {
-            return new CommandResponse
-            {
-                Id = request.Id,
-                Success = false,
-                Error = result.Exception?.Message ?? "Prefill failed while cancellation was in progress",
-                CompletedAt = DateTime.UtcNow
-            };
-        }
-
-        if (_prefillOperation.IsRunning || _api.IsPrefilling)
-        {
-            return new CommandResponse
-            {
-                Id = request.Id,
-                Success = false,
-                Error = "Prefill did not stop cleanly",
-                CompletedAt = DateTime.UtcNow
-            };
-        }
-
-        return new CommandResponse
-        {
-            Id = request.Id,
-            Success = true,
-            Message = result.Status == OwnedOperationStatus.Idle ? "No prefill in progress" : "Prefill cancelled",
-            CompletedAt = DateTime.UtcNow
-        };
+        var operationId = request.Parameters?.GetValueOrDefault("operationId")
+            ?? throw new ArgumentException("operationId is required.");
+        _protocol.ValidateInstance(request.Parameters.GetValueOrDefault("daemonInstanceId") ?? "");
+        var operation = _prefillOperation.Cancel(operationId, _protocol.DaemonInstanceId);
+        return Task.FromResult(operation == null ? Reject(request, "operation-not-found") :
+            new CommandResponse { Id = request.Id, Success = true, Data = operation });
     }
 
     private CommandResponse HandleStatus(CommandRequest request)
@@ -353,7 +307,7 @@ public sealed class SocketCommandInterface : IDisposable
                 }
                 catch (OperationCanceledException) when (token.IsCancellationRequested)
                 {
-                    run.Progress.TryChooseTerminal("cancelled");
+                    run.Progress.TryChooseTerminal("canceled");
                     throw;
                 }
                 catch (Exception)

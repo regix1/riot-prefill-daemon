@@ -38,8 +38,8 @@ public sealed class ConcurrentPrefillTests
         var conflict = await fixture.StartRunAsync(ids[0], Fixture.Products[1]);
         Assert.That(conflict.GetProperty("errorCode").GetString(), Is.EqualTo("operation-conflict"));
 
-        var ambiguous = await fixture.CallAsync("cancel-prefill");
-        Assert.That(ambiguous.GetProperty("errorCode").GetString(), Is.EqualTo("ambiguous-operation"));
+        var unkeyed = await fixture.CallAsync("cancel-prefill");
+        Assert.That(unkeyed.GetProperty("errorCode").GetString(), Is.EqualTo("invalid-request"));
         var wrong = await fixture.CallAsync("cancel-prefill", new()
         {
             ["operationId"] = ids[0],
@@ -47,13 +47,13 @@ public sealed class ConcurrentPrefillTests
         });
         Assert.That(wrong.GetProperty("errorCode").GetString(), Is.EqualTo("instance-changed"));
         var cancel = await fixture.CallAsync("cancel-prefill", fixture.Identity(ids[0]));
-        Assert.That(cancel.GetProperty("data").GetProperty("state").GetString(), Is.EqualTo("cancelling"));
-        await fixture.Handler.Bodies[Fixture.Products[0]].Cancelled.Task.WaitAsync(TimeSpan.FromSeconds(5));
-        var cancelled = await fixture.TerminalAsync(ids[0]);
-        Assert.That(cancelled.GetProperty("operation").GetProperty("state").GetString(), Is.EqualTo("cancelled"));
-        Assert.That(cancelled.GetProperty("operation").GetProperty("bytesTransferred").GetInt64(), Is.EqualTo(8));
-        Assert.That(fixture.Handler.Bodies[Fixture.Products[1]].Cancelled.Task.IsCompleted, Is.False);
-        Assert.That(fixture.Handler.Bodies[Fixture.Products[2]].Cancelled.Task.IsCompleted, Is.False);
+        Assert.That(cancel.GetProperty("data").GetProperty("state").GetString(), Is.EqualTo("canceling"));
+        await fixture.Handler.Bodies[Fixture.Products[0]].Canceled.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        var canceled = await fixture.TerminalAsync(ids[0]);
+        Assert.That(canceled.GetProperty("operation").GetProperty("state").GetString(), Is.EqualTo("canceled"));
+        Assert.That(canceled.GetProperty("operation").GetProperty("bytesTransferred").GetInt64(), Is.EqualTo(8));
+        Assert.That(fixture.Handler.Bodies[Fixture.Products[1]].Canceled.Task.IsCompleted, Is.False);
+        Assert.That(fixture.Handler.Bodies[Fixture.Products[2]].Canceled.Task.IsCompleted, Is.False);
 
         await fixture.ReconnectAsync();
         var active = await fixture.CallAsync("status");
@@ -72,7 +72,7 @@ public sealed class ConcurrentPrefillTests
         Assert.That(fixture.Handler.PeakBodies, Is.EqualTo(3));
         Assert.That(fixture.Handler.ActiveBodies, Is.Zero);
         var repeated = await fixture.CallAsync("cancel-prefill", fixture.Identity(ids[0]));
-        Assert.That(repeated.GetProperty("data").GetProperty("state").GetString(), Is.EqualTo("cancelled"));
+        Assert.That(repeated.GetProperty("data").GetProperty("state").GetString(), Is.EqualTo("canceled"));
     }
 
     [Test]
@@ -128,7 +128,7 @@ public sealed class ConcurrentPrefillTests
     }
 
     [Test]
-    public async Task ProcessBudget_HoldsThroughBodyRead_AndCancelledRunReleasesNextTurn()
+    public async Task ProcessBudget_HoldsThroughBodyRead_AndCanceledRunReleasesNextTurn()
     {
         await using var fixture = await Fixture.StartAsync(3, maxRequests: 2);
         var first = Guid.NewGuid().ToString();
@@ -207,7 +207,7 @@ public sealed class ConcurrentPrefillTests
                 var response = await CallAsync("get-operation", Identity(id));
                 Assert.That(response.GetProperty("success").GetBoolean(), Is.True, response.ToString());
                 var page = response.GetProperty("data");
-                if (page.GetProperty("operation").GetProperty("state").GetString() is "completed" or "failed" or "cancelled") return page;
+                if (page.GetProperty("operation").GetProperty("state").GetString() is "completed" or "failed" or "canceled") return page;
                 await Task.Yield();
             }
         }
@@ -302,7 +302,7 @@ public sealed class ConcurrentPrefillTests
     {
         internal readonly TaskCompletionSource Entered = new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal readonly TaskCompletionSource Release = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        internal readonly TaskCompletionSource Cancelled = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        internal readonly TaskCompletionSource Canceled = new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal readonly TaskCompletionSource Drained = new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal Action? OnEntered;
         private bool _read;
@@ -312,7 +312,7 @@ public sealed class ConcurrentPrefillTests
             Entered.TrySetResult();
             OnEntered?.Invoke();
             try { await Release.Task.WaitAsync(cancellationToken); return 0; }
-            catch (OperationCanceledException) { Cancelled.TrySetResult(); throw; }
+            catch (OperationCanceledException) { Canceled.TrySetResult(); throw; }
         }
         protected override void Dispose(bool disposing) { Drained.TrySetResult(); base.Dispose(disposing); }
     }

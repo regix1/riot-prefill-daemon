@@ -18,6 +18,10 @@
                 {
                     return LegendsOfRuneterra;
                 }
+                if (TeamfightTactics != null)
+                {
+                    return TeamfightTactics;
+                }
                 return null;
             }
         }
@@ -30,6 +34,9 @@
 
         [JsonPropertyName("keystone.products.bacon.patchlines.live")]
         public KeystoneProduct LegendsOfRuneterra { get; set; }
+
+        [JsonPropertyName("keystone.products.teamfighttactics.patchlines.live")]
+        public KeystoneProduct TeamfightTactics { get; set; }
     }
 
     public class KeystoneProduct
@@ -56,5 +63,27 @@
         public string patch_url { get; set; }
 
         public string[] allowed_http_fallback_hostnames { get; set; }
+
+        // Products with an empty patch_url (Teamfight Tactics) name their release through the sieve service instead.
+        public PatchArtifact[] patch_artifacts { get; set; }
+    }
+
+    public class PatchArtifact
+    {
+        public string type { get; set; }
+        public PatchSieve patchsieve { get; set; }
+    }
+
+    public class PatchSieve
+    {
+        public string product { get; set; }
+        public string version_set { get; set; }
+        public PatchSieveParameters parameters { get; set; }
+    }
+
+    public class PatchSieveParameters
+    {
+        public string artifact_type_id { get; set; }
+        public string platform { get; set; }
     }
 }

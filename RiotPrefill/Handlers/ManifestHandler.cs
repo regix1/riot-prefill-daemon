@@ -54,52 +54,6 @@
             }
         }
 
-        public async Task<ReleaseInfo> FindLatestProductReleaseAsync(
-            ArtifactType artifactType,
-            CancellationToken cancellationToken = default)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-
-            //TODO parameterize
-            var apiUrl = $"https://sieve.services.riotcdn.net/api/v1/products/lol/version-sets/NA1?q[platform]=windows";
-            using var request = new HttpRequestMessage(HttpMethod.Get, apiUrl);
-
-            using var permit = _budget == null ? null : await _budget.AcquireAsync(_operationId, _maxConcurrency, cancellationToken);
-            using var response = await _httpClient.SendAsync(
-                request,
-                HttpCompletionOption.ResponseHeadersRead,
-                cancellationToken);
-            response.EnsureSuccessStatusCode();
-
-            using var responseStream = await response.Content.ReadAsStreamAsync(cancellationToken);
-            var releaseApiResponse = await ReadWithinTimeoutAsync(
-                token => JsonSerializer.DeserializeAsync(
-                    responseStream,
-                    SerializationContext.Default.ReleaseApiResponse,
-                    token).AsTask(),
-                ApiBodyTimeout,
-                cancellationToken);
-            var releases = releaseApiResponse.releases;
-
-            var latestVersion = releases.Where(e => e.Platform.Contains("windows"))
-                                                    .Where(e => e.ArtifactTypeId == artifactType.Value)
-                                                    .OrderByDescending(e => e.Version)
-                                                    .First();
-
-            _ansiConsole.LogMarkupLine($"Found latest version {LightYellow(latestVersion.Version)} for artifact {Cyan(latestVersion.ArtifactTypeId)}");
-            return latestVersion;
-        }
-
-        public async Task<string> DownloadManifestAsync(
-            ReleaseInfo release,
-            CancellationToken cancellationToken = default)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-
-            var cachedFileName = Path.Combine(_settings.CacheDirectory, $"{release._Release.product}-{release.ArtifactTypeId}-{release.Version}.manifest");
-            return await DownloadManifestAsync(release.DownloadUrl, cachedFileName, cancellationToken);
-        }
-
         /// <summary>
         /// Bounds a response body read.  These requests use ResponseHeadersRead, which returns as soon as the
         /// headers arrive and takes the body outside HttpClient.Timeout, so a server that sends headers and
@@ -130,6 +84,21 @@
             Patchline product,
             CancellationToken cancellationToken = default)
         {
+            // The configuration read releases its request permit before the sieve read takes one, since the
+            // size and cache-status passes run with a single permit per operation.
+            var configuration = await FindWinConfigurationAsync(product, cancellationToken);
+            if (!string.IsNullOrEmpty(configuration.patch_url))
+            {
+                return configuration.patch_url;
+            }
+            var sieve = configuration.patch_artifacts.First(e => e.type == "patchsieve").patchsieve;
+            return await FindSieveReleaseUrlAsync(sieve, cancellationToken);
+        }
+
+        private async Task<Configuration1> FindWinConfigurationAsync(
+            Patchline product,
+            CancellationToken cancellationToken)
+        {
             cancellationToken.ThrowIfCancellationRequested();
 
             var apiUrl = $"https://clientconfig.rpg.riotgames.com/api/v1/config/public?namespace=keystone.products.{product.Value}.patchlines";
@@ -151,12 +120,12 @@
                 ApiBodyTimeout,
                 cancellationToken);
 
-            // Win config selection is region-keyed for some products (LoL/Valorant use "NA"), but
-            // others (e.g. Legends of Runeterra / "bacon") expose a single region-agnostic config
-            // with id "default". Prefer NA, then default, then whatever Win config exists so we
-            // never throw "Sequence contains no matching element" for a valid Win patchline.
+            // Win config selection is region-keyed for some products (LoL/Valorant use "NA", Teamfight
+            // Tactics uses "NA1"), but others (e.g. Legends of Runeterra / "bacon") expose a single
+            // region-agnostic config with id "default". Prefer NA, then default, then whatever Win config
+            // exists so we never throw "Sequence contains no matching element" for a valid Win patchline.
             var configurations = releaseApiResponse.KeystoneProduct.platforms.Win.configurations;
-            var configuration = configurations.FirstOrDefault(e => e.id.ToUpper() == "NA")
+            var configuration = configurations.FirstOrDefault(e => e.id.ToUpper() is "NA" or "NA1")
                                 ?? configurations.FirstOrDefault(e => e.id.ToLower() == "default")
                                 ?? configurations.FirstOrDefault();
             if (configuration == null)
@@ -164,9 +133,41 @@
                 throw new InvalidOperationException(
                     $"No Win configuration found for patchline '{product.Value}'; cannot resolve a manifest URL.");
             }
-            var manifestUrl = configuration.patch_url;
 
-            return manifestUrl;
+            return configuration;
+        }
+
+        /// <summary>
+        /// Returns the manifest URL of the highest version in a sieve version set.  The set lists every
+        /// release it has held, in no fixed order, so the order is set here.
+        /// </summary>
+        private async Task<string> FindSieveReleaseUrlAsync(PatchSieve sieve, CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            var apiUrl = $"https://sieve.services.riotcdn.net/api/v1/products/{sieve.product}/version-sets/{sieve.version_set}" +
+                         $"?q[artifact_type_id]={sieve.parameters.artifact_type_id}&q[platform]={sieve.parameters.platform}";
+            using var request = new HttpRequestMessage(HttpMethod.Get, apiUrl);
+
+            using var permit = _budget == null ? null : await _budget.AcquireAsync(_operationId, _maxConcurrency, cancellationToken);
+            using var response = await _httpClient.SendAsync(
+                request,
+                HttpCompletionOption.ResponseHeadersRead,
+                cancellationToken);
+            response.EnsureSuccessStatusCode();
+
+            using var responseStream = await response.Content.ReadAsStreamAsync(cancellationToken);
+            var releaseApiResponse = await ReadWithinTimeoutAsync(
+                token => JsonSerializer.DeserializeAsync(
+                    responseStream,
+                    SerializationContext.Default.ReleaseApiResponse,
+                    token).AsTask(),
+                ApiBodyTimeout,
+                cancellationToken);
+
+            var latest = releaseApiResponse.releases.OrderByDescending(e => e.Version).First();
+            _ansiConsole.LogMarkupLine($"Found latest version {LightYellow(latest.Version)} for {Cyan(sieve.product)}");
+            return latest.DownloadUrl;
         }
 
         public async Task<string> DownloadManifestAsync(

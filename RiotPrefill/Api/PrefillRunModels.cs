@@ -83,7 +83,7 @@ public class PrefillProgressUpdate
     public DateTimeOffset? StartedAt { get; init; }
     public string? Reason { get; init; }
     public int SkippedApps { get; init; }
-    public int CancelledApps { get; init; }
+    public int CanceledApps { get; init; }
     [System.Text.Json.Serialization.JsonPropertyName("state")]
     public string State { get; set; } = "idle";
 

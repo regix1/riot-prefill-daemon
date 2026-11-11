@@ -97,6 +97,10 @@
             {
                 _currentCdn = "bacon.dyn.riotcdn.net";
             }
+            if (product == Patchline.TeamfightTactics)
+            {
+                _currentCdn = "teamfighttactics.dyn.riotcdn.net";
+            }
         }
 
         public async Task InitializeAsync()

@@ -118,7 +118,7 @@ namespace RiotPrefill
 
         /// <summary>
         /// Creates a one-shot self-shutdown timer driven by the PREFILL_MAX_LIFETIME_SECONDS env var.
-        /// When it elapses, the host <see cref="CancellationTokenSource"/> is cancelled so the long-lived
+        /// When it elapses, the host <see cref="CancellationTokenSource"/> is canceled so the long-lived
         /// daemon loop unblocks and the process exits 0. Returns null when the env var is unset/0/non-integer.
         /// </summary>
         private static System.Threading.Timer? CreateMaxLifetimeTimer(CancellationTokenSource cts)
