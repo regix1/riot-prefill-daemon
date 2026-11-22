@@ -7,8 +7,11 @@ using System.IO;
 using System.Linq;
 using System.Net;
 using System.Net.Http;
+using System.Reflection;
+using System.Runtime.CompilerServices;
 using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using System.Threading;
 using FlatSharp;
 using LancachePrefill.Common;
@@ -149,6 +152,74 @@ public sealed class ConcurrentPrefillTests
         Assert.That((await fixture.TerminalAsync(third)).GetProperty("operation").GetProperty("state").GetString(), Is.EqualTo("completed"));
     }
 
+    [Test]
+    public async Task ChangeConcurrency_ChangesAnActiveRunsLimit_AndRefusesLikeCancel()
+    {
+        await using var fixture = await Fixture.StartAsync(4);
+        var id = Guid.NewGuid().ToString();
+        await fixture.StartRunAsync(id, Fixture.Products[0]);
+        await fixture.Handler.Bodies[Fixture.Products[0]].Entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        var change = fixture.Identity(id);
+        change["maxConcurrency"] = "5";
+        var changed = await fixture.CallAsync("change-concurrency", change);
+        Assert.That(changed.GetProperty("success").GetBoolean(), Is.True, changed.ToString());
+        Assert.That(changed.GetProperty("data").GetProperty("operationId").GetString(), Is.EqualTo(id));
+        Assert.That(fixture.Budget.LimitFor(id), Is.EqualTo(5));
+
+        var unknown = fixture.Identity(Guid.NewGuid().ToString());
+        unknown["maxConcurrency"] = "5";
+        Assert.That((await fixture.CallAsync("change-concurrency", unknown)).GetProperty("errorCode").GetString(),
+            Is.EqualTo("operation-not-found"));
+        var wrong = new Dictionary<string, string>
+        {
+            ["operationId"] = id,
+            ["daemonInstanceId"] = Guid.NewGuid().ToString(),
+            ["maxConcurrency"] = "5"
+        };
+        Assert.That((await fixture.CallAsync("change-concurrency", wrong)).GetProperty("errorCode").GetString(),
+            Is.EqualTo("instance-changed"));
+        change["maxConcurrency"] = "0";
+        Assert.That((await fixture.CallAsync("change-concurrency", change)).GetProperty("errorCode").GetString(),
+            Is.EqualTo("invalid-request"));
+        Assert.That(fixture.Budget.LimitFor(id), Is.EqualTo(5));
+    }
+
+    [Test]
+    public async Task EachRun_SendsOneStartRequest_AndGoesOnWhenNoCacheAnswers()
+    {
+        var original = Console.Out;
+        using var output = new StringWriter();
+        var id = Guid.NewGuid().ToString();
+        Console.SetOut(output);
+        try
+        {
+            await using var fixture = await Fixture.StartAsync(4);
+            fixture.Handler.ReleaseAll();
+            await fixture.StartRunAsync(id, Fixture.Products[0]);
+            var page = await fixture.TerminalAsync(id);
+            Assert.That(page.GetProperty("operation").GetProperty("state").GetString(), Is.EqualTo("completed"));
+            Assert.That(fixture.Handler.ContentRequests, Is.EqualTo(1));
+        }
+        finally { Console.SetOut(original); }
+
+        // The console wraps long lines, so the count reads the text with its line breaks folded.
+        var logged = Regex.Replace(output.ToString(), @"\s+", " ");
+        Assert.That(Regex.Matches(logged, Regex.Escape($"start request for run {id};")).Count, Is.EqualTo(1), logged);
+    }
+
+#pragma warning disable CA2255 // The test assembly needs the address before any test runs.
+    [ModuleInitializer]
+    internal static void UseLocalCacheAddress()
+    {
+        // The resolver keeps its first answer for the whole process, so the address must be in place before any
+        // test resolves, and an IP literal skips DNS.  Nothing listens on port 80 in the test container, so a
+        // run's start request fails at once, is logged, and the run goes on.
+        if (string.IsNullOrEmpty(Environment.GetEnvironmentVariable("LANCACHE_IP")))
+            Environment.SetEnvironmentVariable("LANCACHE_IP", "127.0.0.1");
+    }
+#pragma warning restore CA2255
+
     internal sealed class Fixture : IAsyncDisposable
     {
         internal static readonly string[] Products = { "league_of_legends", "valorant", "bacon" };
@@ -171,6 +242,10 @@ public sealed class ConcurrentPrefillTests
         }
 
         internal string Marker(string product) => Path.Combine(DirectoryPath, $"prefilledVersion-{product}.txt");
+
+        // The command interface keeps its API private; the request budget is read through it.
+        internal RequestBudget Budget => ((RiotPrefillApi)typeof(SocketCommandInterface)
+            .GetField("_api", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(_server)!).Budget;
         internal Dictionary<string, string> Identity(string id) => new()
         {
             ["operationId"] = id,

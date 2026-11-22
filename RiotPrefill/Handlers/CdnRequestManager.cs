@@ -87,7 +87,7 @@
             //TODO this is ugly and I don't like having to determine which cdn like this.  Should probably be passed in with the download list.
             if (product == Patchline.LeagueOfLegends)
             {
-                _currentCdn = "lol.dyn.riotcdn.net";
+                _currentCdn = AppConfig.RiotTriggerDomain;
             }
             if (product == Patchline.Valorant)
             {
@@ -192,7 +192,10 @@
             var succeededCount = 0;
             var sourceIsDown = 0;
 
-            await Parallel.ForEachAsync(requestsToDownload, new ParallelOptions { MaxDegreeOfParallelism = _maxConcurrency, CancellationToken = cancellationToken }, body: async (request, ct) =>
+            // The budget holds requests in flight to the run's current limit, which can be raised while the run
+            // goes on; a pool sized from the start value would leave a raised limit with no workers to use it.
+            var workers = _budget == null ? _maxConcurrency : _budget.MaxConcurrentRequests;
+            await Parallel.ForEachAsync(requestsToDownload, new ParallelOptions { MaxDegreeOfParallelism = workers, CancellationToken = cancellationToken }, body: async (request, ct) =>
             {
                 if (Volatile.Read(ref sourceIsDown) != 0)
                 {
@@ -215,6 +218,14 @@
                     BuildRangeHeader(request, requestMessage);
 
                     using var permit = _budget == null ? null : await _budget.AcquireAsync(_operationId, _maxConcurrency, ct);
+
+                    // The pool is wider than the run's limit, so a worker can wait out both waves for its permit.
+                    if (Volatile.Read(ref sourceIsDown) != 0)
+                    {
+                        failedRequests.Add(request);
+                        return;
+                    }
+
                     using var response = await _client.SendAsync(requestMessage, HttpCompletionOption.ResponseHeadersRead, ct);
                     using Stream responseStream = await response.Content.ReadAsStreamAsync(ct);
                     response.EnsureSuccessStatusCode();

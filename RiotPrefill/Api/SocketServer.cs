@@ -278,7 +278,7 @@ public sealed class SocketServer : IAsyncDisposable
     private static DaemonCommandLane GetCommandLane(string commandType)
         => commandType.ToLowerInvariant() switch
         {
-            "cancel-prefill" or "status" or "shutdown" or "get-operation" => DaemonCommandLane.Control,
+            "cancel-prefill" or "change-concurrency" or "status" or "shutdown" or "get-operation" => DaemonCommandLane.Control,
             "prefill" or "set-selected-apps" or "clear-cache" or "get-selected-apps-status" => DaemonCommandLane.Serialized,
             _ => DaemonCommandLane.Concurrent
         };

@@ -9,6 +9,12 @@ namespace RiotPrefill.Settings
             Directory.CreateDirectory(CacheDir);
         }
 
+        /// <summary>
+        /// League of Legends content host.  Any Riot content host reaches the same cache, so this one also tags the
+        /// request that marks the start of a run.
+        /// </summary>
+        public static string RiotTriggerDomain => "lol.dyn.riotcdn.net";
+
         private static bool _verboseLogs;
         public static bool VerboseLogs
         {
@@ -36,24 +42,9 @@ namespace RiotPrefill.Settings
         /// </summary>
         private static readonly string ConfigDir = Path.Combine(AppContext.BaseDirectory, "Config");
 
-        #region Serialization file paths
-
-        public static readonly string UserSelectedAppsPath = Path.Combine(ConfigDir, "selectedAppsToPrefill.json");
-
-        /// <summary>
-        /// Keeps track of which depots have been previously downloaded.  Is used to determine whether or not a game is up to date,
-        /// based on whether all of the depots being downloaded are up to date.
-        /// </summary>
-        //TODO implement
-        public static readonly string SuccessfullyDownloadedDepotsPath = Path.Combine(ConfigDir, "successfullyDownloadedDepots.json");
-
-        #endregion
-
         #region Debugging
 
         private static bool _compareAgainstRealRequests;
-
-        public static readonly string DebugOutputDir = Path.Combine(CacheDir, "Debugging");
 
         /// <summary>
         /// Skips using locally cached manifests. Saves disk space, at the expense of slower subsequent runs.  Intended for debugging.

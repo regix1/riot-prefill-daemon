@@ -4,6 +4,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Net.Http;
 using System.Text.Json;
 using System.Threading;
 using LancachePrefill.Common;
@@ -49,8 +50,9 @@ public sealed class PrefillRunTests
         Assert.That(status.GetProperty("maxConcurrentRuns").GetInt32(), Is.EqualTo(4));
         Assert.That(status.GetProperty("maxConcurrentRequests").GetInt32(), Is.EqualTo(20));
         var features = status.GetProperty("features");
-        Assert.That(features.GetArrayLength(), Is.EqualTo(6));
-        Assert.That(features.EnumerateArray().Select(feature => feature.GetString()), Does.Contain("cacheStatusV2"));
+        Assert.That(features.GetArrayLength(), Is.EqualTo(8));
+        Assert.That(features.EnumerateArray().Select(feature => feature.GetString()),
+            Is.SupersetOf(new[] { "cacheStatusV2", "changeConcurrency", "addressProbe" }));
         var empty = await fixture.StartRunAsync(Guid.NewGuid().ToString());
         Assert.That(empty.GetProperty("success").GetBoolean(), Is.False);
         var missing = await fixture.CallAsync("get-operation", fixture.Identity(Guid.NewGuid().ToString()));
@@ -167,5 +169,111 @@ public sealed class PrefillRunTests
         Assert.That((await fixture.CallAsync("prefill", second, secondId)).GetProperty("success").GetBoolean(), Is.True);
         Assert.That((await fixture.TerminalAsync(secondId)).GetProperty("items")[0].GetProperty("result").GetString(), Is.EqualTo("already_cached"));
         Assert.That(fixture.Handler.ContentRequests, Is.EqualTo(1));
+    }
+
+    [Test]
+    public async Task SelectedStatus_GameTheManagerHoldsAtItsCurrentVersion_IsUpToDateWithoutAMarker()
+    {
+        var directory = Directory.CreateTempSubdirectory("riot-status-").FullName;
+        using var handler = new ConcurrentPrefillTests.LocalRequests();
+        try
+        {
+            using var api = await CreateStatusApiAsync(directory, handler, StatusProduct);
+            var status = await api.GetSelectedAppsStatusAsync([new CachedAppInput { AppId = StatusProduct, Revision = StatusRevision }]);
+            var app = status.Apps.Single();
+            Assert.That(app.IsUpToDate, Is.True);
+            Assert.That(app.DownloadSize, Is.Zero);
+        }
+        finally { Directory.Delete(directory, true); }
+    }
+
+    [Test]
+    public async Task SelectedStatus_EmptyManagerList_CountsTheGameDespiteALocalMarker()
+    {
+        var directory = Directory.CreateTempSubdirectory("riot-status-").FullName;
+        using var handler = new ConcurrentPrefillTests.LocalRequests();
+        try
+        {
+            await File.WriteAllTextAsync(Path.Combine(directory, $"prefilledVersion-{StatusProduct}.txt"), StatusRevision);
+            using var api = await CreateStatusApiAsync(directory, handler, StatusProduct);
+            var status = await api.GetSelectedAppsStatusAsync([]);
+            var app = status.Apps.Single();
+            Assert.That(app.IsUpToDate, Is.False);
+            Assert.That(app.DownloadSize, Is.GreaterThan(0));
+        }
+        finally { Directory.Delete(directory, true); }
+    }
+
+    [Test]
+    public async Task SelectedStatus_WithoutAManagerList_KeepsTheLocalMarkerAnswer()
+    {
+        var directory = Directory.CreateTempSubdirectory("riot-status-").FullName;
+        using var handler = new ConcurrentPrefillTests.LocalRequests();
+        try
+        {
+            await File.WriteAllTextAsync(Path.Combine(directory, $"prefilledVersion-{StatusProduct}.txt"), StatusRevision);
+            using var api = await CreateStatusApiAsync(directory, handler, StatusProduct);
+            var status = await api.GetSelectedAppsStatusAsync(null);
+            var app = status.Apps.Single();
+            Assert.That(app.IsUpToDate, Is.True);
+            Assert.That(app.DownloadSize, Is.Zero);
+        }
+        finally { Directory.Delete(directory, true); }
+    }
+
+    [Test]
+    public async Task SelectedStatus_TotalLeavesOutAnUpToDateGame()
+    {
+        var directory = Directory.CreateTempSubdirectory("riot-status-").FullName;
+        using var handler = new ConcurrentPrefillTests.LocalRequests();
+        try
+        {
+            using var api = await CreateStatusApiAsync(directory, handler, StatusProduct, "bacon");
+            var status = await api.GetSelectedAppsStatusAsync([new CachedAppInput { AppId = StatusProduct, Revision = StatusRevision }]);
+            var other = status.Apps.Single(app => app.AppId == "bacon");
+            Assert.That(other.DownloadSize, Is.GreaterThan(0));
+            Assert.That(status.TotalDownloadSize, Is.EqualTo(other.DownloadSize));
+        }
+        finally { Directory.Delete(directory, true); }
+    }
+
+    [Test]
+    public async Task SelectedStatus_UnreadableCurrentVersion_CountsTheGameAndStillAnswers()
+    {
+        var directory = Directory.CreateTempSubdirectory("riot-status-").FullName;
+        using var handler = new FailingReleaseLookup(new ConcurrentPrefillTests.LocalRequests());
+        try
+        {
+            using var api = await CreateStatusApiAsync(directory, handler, StatusProduct);
+            var sized = (await api.GetSelectedAppsStatusAsync(null)).Apps.Single();
+            handler.Fail = true;
+            var status = await api.GetSelectedAppsStatusAsync([new CachedAppInput { AppId = StatusProduct, Revision = StatusRevision }]);
+            var app = status.Apps.Single();
+            Assert.That(app.IsUpToDate, Is.False);
+            Assert.That(app.DownloadSize, Is.EqualTo(sized.DownloadSize).And.GreaterThan(0));
+        }
+        finally { Directory.Delete(directory, true); }
+    }
+
+    private const string StatusProduct = "valorant";
+    // The release name the local test CDN reports for the product.
+    private const string StatusRevision = "valorant.manifest";
+
+    private static async Task<RiotPrefillApi> CreateStatusApiAsync(string directory, HttpMessageHandler handler,
+        params string[] selected)
+    {
+        var api = new RiotPrefillApi(NullProgress.Instance, new PrefillProtocol(20),
+            () => new HttpClient(handler, false), directory, "127.0.0.1");
+        await api.InitializeAsync();
+        api.SetSelectedApps(selected);
+        return api;
+    }
+
+    private sealed class FailingReleaseLookup(HttpMessageHandler inner) : DelegatingHandler(inner)
+    {
+        internal bool Fail { get; set; }
+
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+            => Fail ? throw new HttpRequestException("Release lookup failed.") : base.SendAsync(request, cancellationToken);
     }
 }

@@ -58,7 +58,7 @@ public sealed class TeamfightTacticsTests
             Assert.That(owned.Select(game => (game.AppId, game.Name)), Does.Contain((Product, "Teamfight Tactics")));
 
             api.SetSelectedApps(new[] { Product });
-            var selected = await api.GetSelectedAppsStatusAsync().WaitAsync(Bound);
+            var selected = await api.GetSelectedAppsStatusAsync(null).WaitAsync(Bound);
             var row = selected.Apps.Single();
             Assert.Multiple(() =>
             {

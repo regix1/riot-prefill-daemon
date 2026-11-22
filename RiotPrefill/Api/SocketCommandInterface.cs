@@ -16,7 +16,7 @@ namespace RiotPrefill.Api;
 /// </summary>
 public sealed class SocketCommandInterface : IDisposable
 {
-    private static readonly string[] StatusFeatures = [.. PrefillProtocol.Features, "cacheStatusV2"];
+    private static readonly string[] StatusFeatures = [.. PrefillProtocol.Features, "cacheStatusV2", "addressProbe"];
     private readonly SocketServer _socketServer;
     private readonly SocketProgress _progress;
     private readonly CancellationTokenSource _cts = new();
@@ -90,6 +90,7 @@ public sealed class SocketCommandInterface : IDisposable
             return request.Type.ToLowerInvariant() switch
             {
                 "cancel-prefill" => await HandleCancelPrefillAsync(request, cancellationToken),
+                "change-concurrency" => await HandleChangeConcurrencyAsync(request, cancellationToken),
                 "status" => HandleStatus(request),
                 "get-operation" => HandleGetOperation(request),
                 "get-owned-games" => await HandleGetOwnedGamesAsync(request, cancellationToken),
@@ -145,6 +146,19 @@ public sealed class SocketCommandInterface : IDisposable
             ?? throw new ArgumentException("operationId is required.");
         _protocol.ValidateInstance(request.Parameters.GetValueOrDefault("daemonInstanceId") ?? "");
         var operation = _prefillOperation.Cancel(operationId, _protocol.DaemonInstanceId);
+        return Task.FromResult(operation == null ? Reject(request, "operation-not-found") :
+            new CommandResponse { Id = request.Id, Success = true, Data = operation });
+    }
+
+    private Task<CommandResponse> HandleChangeConcurrencyAsync(
+        CommandRequest request,
+        CancellationToken cancellationToken)
+    {
+        var operationId = request.Parameters?.GetValueOrDefault("operationId")
+            ?? throw new ArgumentException("operationId is required.");
+        _protocol.ValidateInstance(request.Parameters.GetValueOrDefault("daemonInstanceId") ?? "");
+        var limit = PrefillProtocol.ParseRequestLimit(request.Parameters.GetValueOrDefault("maxConcurrency"));
+        var operation = _prefillOperation.ChangeConcurrency(operationId, _protocol.DaemonInstanceId, limit, _api.Budget);
         return Task.FromResult(operation == null ? Reject(request, "operation-not-found") :
             new CommandResponse { Id = request.Id, Success = true, Data = operation });
     }
@@ -242,7 +256,7 @@ public sealed class SocketCommandInterface : IDisposable
 
     private async Task<CommandResponse> HandleGetSelectedAppsStatusAsync(CommandRequest request, CancellationToken cancellationToken)
     {
-        var status = await _api.GetSelectedAppsStatusAsync(cancellationToken);
+        var status = await _api.GetSelectedAppsStatusAsync(ParseCachedApps(request.Parameters), cancellationToken);
 
         return new CommandResponse
         {
@@ -253,6 +267,12 @@ public sealed class SocketCommandInterface : IDisposable
             CompletedAt = DateTime.UtcNow
         };
     }
+
+    private static List<CachedAppInput>? ParseCachedApps(Dictionary<string, string>? parameters)
+        => parameters != null && parameters.TryGetValue("cachedApps", out var cachedJson)
+            ? JsonSerializer.Deserialize(cachedJson, DaemonSerializationContext.Default.ListCachedAppInput)
+                ?? throw new ArgumentException("cachedApps must be a JSON array.")
+            : null;
 
     private async Task<CommandResponse> HandlePrefillAsync(
         CommandRequest request,
@@ -278,10 +298,7 @@ public sealed class SocketCommandInterface : IDisposable
                 ?? throw new ArgumentException("appIds must be a JSON array.");
             ids = supplied.Select(RiotPrefillApi.Canonicalize).ToArray();
         }
-        var cachedApps = parameters.TryGetValue("cachedApps", out var cachedJson)
-            ? JsonSerializer.Deserialize(cachedJson, DaemonSerializationContext.Default.ListCachedAppInput)
-                ?? throw new ArgumentException("cachedApps must be a JSON array.")
-            : [];
+        var cachedApps = ParseCachedApps(parameters) ?? [];
         var concurrency = _protocol.MaxConcurrentRequests;
         if (parameters.TryGetValue("maxConcurrency", out var maximum)
             && !int.TryParse(maximum, out concurrency)) return Reject(request, "invalid-concurrency");
@@ -302,6 +319,10 @@ public sealed class SocketCommandInterface : IDisposable
             {
                 try
                 {
+                    // The manager records the address the cache logs for this request as the run's prefill
+                    // address, which works in every network setup without the manager knowing which.
+                    await LancacheIpResolver.SendRunProbeAsync(new ApiConsoleAdapter(run), AppConfig.RiotTriggerDomain,
+                        request.Id, token);
                     var result = await _api.PrefillAsync(run, token);
                     if (!result.Success) run.Progress.TryChooseTerminal("failed", "prefill-failed");
                 }

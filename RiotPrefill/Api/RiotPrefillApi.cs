@@ -37,6 +37,7 @@ public sealed class RiotPrefillApi : IDisposable
     private readonly ConcurrentDictionary<string, long> _downloadSizeCache = new();
     private readonly ItemClaims _claims = new();
     private readonly RequestBudget _budget;
+    internal RequestBudget Budget => _budget;
     private readonly Func<HttpClient> _createClient;
     private readonly string? _lancacheAddress;
     private readonly DownloadSettings _settings;
@@ -316,7 +317,8 @@ public sealed class RiotPrefillApi : IDisposable
     /// computed by building the download queue (manifest discovery + parse + coalesce) WITHOUT
     /// transferring any bytes — this is exactly what the CLI prints as "Total download size".
     /// </summary>
-    public async Task<SelectedAppsStatus> GetSelectedAppsStatusAsync(CancellationToken cancellationToken = default)
+    public async Task<SelectedAppsStatus> GetSelectedAppsStatusAsync(IReadOnlyList<CachedAppInput>? cachedApps,
+        CancellationToken cancellationToken = default)
     {
         ThrowIfNotInitialized();
         ThrowIfDisposed();
@@ -343,10 +345,31 @@ public sealed class RiotPrefillApi : IDisposable
             var isUpToDate = HasPrefillMarker(appId);
             long downloadSize = 0;
 
-            // Only run the (network-touching) size pass for products that still need downloading.
-            if (patchline != null && !isUpToDate)
+            if (patchline != null)
             {
-                downloadSize = await GetCachedDownloadSizeAsync(patchline, cancellationToken);
+                // A manager request carries the list the run decides from, empty included; only a request from an
+                // older manager has no list, and then the container's own marker decides, as before.  A new
+                // container has no markers.  Without a list no version is fetched, so that request costs what it did.
+                var currentVersion = string.Empty;
+                if (cachedApps != null)
+                {
+                    try
+                    {
+                        currentVersion = await GetCurrentRevisionAsync(patchline, cancellationToken);
+                    }
+                    catch (Exception)
+                    {
+                        // An unreadable version is not proof the game is current; the size is still reported.
+                        cancellationToken.ThrowIfCancellationRequested();
+                    }
+                }
+                isUpToDate = CachedAppInput.IsUpToDateForStatus(cachedApps, patchline.Value, currentVersion, isUpToDate);
+
+                // Only run the (network-touching) size pass for products that still need downloading.
+                if (!isUpToDate)
+                {
+                    downloadSize = await GetCachedDownloadSizeAsync(patchline, cancellationToken);
+                }
             }
 
             totalDownloadSize += downloadSize;
